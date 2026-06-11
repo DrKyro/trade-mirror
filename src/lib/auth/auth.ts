@@ -17,10 +17,10 @@ export const auth = betterAuth({
     schema,
   }),
 
-  // https://www.better-auth.com/docs/integrations/tanstack#usage-tips
+  // https://better-auth.com/docs/integrations/tanstack#usage-tips
   plugins: [tanstackStartCookies()],
 
-  // https://www.better-auth.com/docs/concepts/session-management#session-caching
+  // https://better-auth.com/docs/concepts/session-management#session-caching
   session: {
     cookieCache: {
       enabled: true,
@@ -28,7 +28,7 @@ export const auth = betterAuth({
     },
   },
 
-  // https://www.better-auth.com/docs/concepts/oauth
+  // https://better-auth.com/docs/concepts/oauth
   socialProviders: {
     github: {
       clientId: env.GITHUB_CLIENT_ID!,
@@ -40,13 +40,13 @@ export const auth = betterAuth({
     },
   },
 
-  // https://www.better-auth.com/docs/authentication/email-password
+  // https://better-auth.com/docs/authentication/email-password
   emailAndPassword: {
     enabled: true,
   },
 
   experimental: {
-    // https://www.better-auth.com/docs/adapters/drizzle#joins-experimental
+    // https://better-auth.com/docs/adapters/drizzle#joins-experimental
     joins: true,
   },
 });

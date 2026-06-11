@@ -368,7 +368,7 @@ const DATA_BADGES: TechBadge[] = [
   },
   {
     alt: "Better Auth version",
-    href: "https://www.better-auth.com/",
+    href: "https://better-auth.com/",
     src: "https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmugnavo%2Ftanstarter%2Fmain%2Fpackage.json&query=%24.dependencies%5B%22better-auth%22%5D&label=better-auth&style=flat-square",
   },
 ];
