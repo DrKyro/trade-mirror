@@ -1,24 +1,45 @@
 node_modules
 
-# Ignore lockfiles we don't use
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
-# bun.lock
+# Lockfiles we don't use
+package-lock.json
+yarn.lock
+bun.lock
 
+# OS
 .DS_Store
-.cache
-.env
+Thumbs.db
 
-.data
-.vercel
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+.cache
 .output
 .wrangler
+.vercel
 .netlify
 dist
-/build/
-/api/
-/server/build
-/public/build
+build/
+api/
+server/build
+public/build
 
+# Database
+.data
+*.db
+*.db-journal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# TanStack
 .tanstack
