@@ -1,5 +1,6 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 
+import { LanguageToggle } from "#/components/language-toggle";
 import { authQueryOptions } from "#/lib/auth/queries";
 
 export const Route = createFileRoute("/_guest")({
@@ -28,6 +29,9 @@ export const Route = createFileRoute("/_guest")({
 function RouteComponent() {
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-6 bg-background p-6 md:p-10">
+      <div className="flex w-full max-w-sm justify-end">
+        <LanguageToggle />
+      </div>
       <div className="w-full max-w-sm">
         <Outlet />
       </div>

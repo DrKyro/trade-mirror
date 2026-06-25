@@ -3,6 +3,7 @@ import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
 import { authClient } from "#/lib/auth/auth-client";
+import { useI18n } from "#/lib/i18n";
 
 interface SocialLoginButtonProps {
   provider: string;
@@ -12,6 +13,7 @@ interface SocialLoginButtonProps {
 }
 
 export function SignInSocialButton(props: SocialLoginButtonProps) {
+  const { t } = useI18n();
   const providerLabel =
     props.provider === "github"
       ? "GitHub"
@@ -26,7 +28,7 @@ export function SignInSocialButton(props: SocialLoginButtonProps) {
         },
         {
           onError: ({ error }) => {
-            toast.error(error.message || `An error occurred during ${providerLabel} sign-in.`);
+            toast.error(error.message || t("error.socialSignIn", { provider: providerLabel }));
           },
         },
       ),
@@ -41,7 +43,7 @@ export function SignInSocialButton(props: SocialLoginButtonProps) {
       onClick={() => mutation.mutate()}
     >
       {props.icon}
-      Login with {providerLabel}
+      {t("auth.loginWith", { provider: providerLabel })}
     </Button>
   );
 }

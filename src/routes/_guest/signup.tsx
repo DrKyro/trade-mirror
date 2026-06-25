@@ -10,6 +10,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth/auth-client";
 import { authQueryOptions } from "#/lib/auth/queries";
+import { useI18n } from "#/lib/i18n";
 
 export const Route = createFileRoute("/_guest/signup")({
   component: SignupForm,
@@ -19,6 +20,7 @@ function SignupForm() {
   const { redirectUrl } = Route.useRouteContext();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const { mutate: signupMutate, isPending } = useMutation({
     mutationFn: async (data: { name: string; email: string; password: string }) => {
@@ -29,7 +31,7 @@ function SignupForm() {
         },
         {
           onError: ({ error }) => {
-            toast.error(error.message || "An error occurred while signing up.");
+            toast.error(error.message || t("error.signUpFailed"));
           },
           onSuccess: () => {
             queryClient.removeQueries({ queryKey: authQueryOptions().queryKey });
@@ -53,7 +55,7 @@ function SignupForm() {
     if (!name || !email || !password || !confirmPassword) return;
 
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match.");
+      toast.error(t("error.passwordMismatch"));
       return;
     }
 
@@ -71,60 +73,62 @@ function SignupForm() {
               </div>
               <span className="sr-only">Acme Inc.</span>
             </Link>
-            <h1 className="text-xl font-bold">Sign up for Acme Inc.</h1>
+            <h1 className="text-xl font-bold">{t("auth.signupTitle")}</h1>
           </div>
           <div className="flex flex-col gap-5">
             <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("common.name")}</Label>
               <Input
                 id="name"
                 name="name"
                 type="text"
-                placeholder="John Doe"
+                placeholder={t("auth.namePlaceholder")}
                 readOnly={isPending}
                 required
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t("common.email")}</Label>
               <Input
                 id="email"
                 name="email"
                 type="email"
-                placeholder="hello@example.com"
+                placeholder={t("auth.emailPlaceholder")}
                 readOnly={isPending}
                 required
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t("common.password")}</Label>
               <Input
                 id="password"
                 name="password"
                 type="password"
-                placeholder="Password"
+                placeholder={t("auth.passwordPlaceholder")}
                 readOnly={isPending}
                 required
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="confirm_password">Confirm Password</Label>
+              <Label htmlFor="confirm_password">{t("auth.confirmPassword")}</Label>
               <Input
                 id="confirm_password"
                 name="confirm_password"
                 type="password"
-                placeholder="Confirm Password"
+                placeholder={t("auth.confirmPasswordPlaceholder")}
                 readOnly={isPending}
                 required
               />
             </div>
             <Button type="submit" className="mt-2 w-full" size="lg" disabled={isPending}>
               {isPending && <LoaderCircleIcon className="animate-spin" />}
-              {isPending ? "Signing up..." : "Sign up"}
+              {isPending ? t("auth.signupSubmitting") : t("auth.signupSubmit")}
             </Button>
           </div>
           <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
-            <span className="relative z-10 bg-background px-2 text-muted-foreground">Or</span>
+            <span className="relative z-10 bg-background px-2 text-muted-foreground">
+              {t("common.or")}
+            </span>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <SignInSocialButton
@@ -145,9 +149,9 @@ function SignupForm() {
       </form>
 
       <div className="text-center text-sm">
-        Already have an account?{" "}
+        {t("auth.hasAccount")}{" "}
         <Link to="/login" className="underline underline-offset-4">
-          Login
+          {t("auth.goLogin")}
         </Link>
       </div>
     </div>

@@ -1,3 +1,4 @@
+import { adminClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
 import { env } from "#/env/client";
@@ -11,5 +12,8 @@ import { env } from "#/env/client";
  * For server/SSR operations, prefer `auth.api` instead, and wrap in a serverFn if needed.
  */
 export const authClient = createAuthClient({
-  baseURL: env.VITE_BASE_URL,
+  // In local development we sometimes run on a different port than the configured
+  // public base URL, so prefer the current browser origin when available.
+  baseURL: typeof window === "undefined" ? env.VITE_BASE_URL : window.location.origin,
+  plugins: [adminClient()],
 });

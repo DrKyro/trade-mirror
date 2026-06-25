@@ -9,6 +9,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth/auth-client";
+import { useI18n } from "#/lib/i18n";
 
 export const Route = createFileRoute("/_guest/login")({
   component: LoginForm,
@@ -16,6 +17,7 @@ export const Route = createFileRoute("/_guest/login")({
 
 function LoginForm() {
   const { redirectUrl } = Route.useRouteContext();
+  const { t } = useI18n();
 
   const { mutate: emailLoginMutate, isPending } = useMutation({
     mutationFn: async (data: { email: string; password: string }) =>
@@ -26,7 +28,7 @@ function LoginForm() {
         },
         {
           onError: ({ error }) => {
-            toast.error(error.message || "An error occurred while signing in.");
+            toast.error(error.message || t("error.signInFailed"));
           },
           // better-auth seems to trigger a hard navigation on login,
           // so we don't have to revalidate & navigate ourselves
@@ -62,38 +64,40 @@ function LoginForm() {
               </div>
               <span className="sr-only">Acme Inc.</span>
             </Link>
-            <h1 className="text-xl font-bold">Welcome back to Acme Inc.</h1>
+            <h1 className="text-xl font-bold">{t("auth.loginTitle")}</h1>
           </div>
           <div className="flex flex-col gap-5">
             <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t("common.email")}</Label>
               <Input
                 id="email"
                 name="email"
                 type="email"
-                placeholder="hello@example.com"
+                placeholder={t("auth.emailPlaceholder")}
                 readOnly={isPending}
                 required
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t("common.password")}</Label>
               <Input
                 id="password"
                 name="password"
                 type="password"
-                placeholder="Enter password here"
+                placeholder={t("auth.passwordPlaceholder")}
                 readOnly={isPending}
                 required
               />
             </div>
             <Button type="submit" className="mt-2 w-full" size="lg" disabled={isPending}>
               {isPending && <LoaderCircleIcon className="animate-spin" />}
-              {isPending ? "Logging in..." : "Login"}
+              {isPending ? t("auth.loginSubmitting") : t("auth.loginSubmit")}
             </Button>
           </div>
           <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t after:border-border">
-            <span className="relative z-10 bg-background px-2 text-muted-foreground">Or</span>
+            <span className="relative z-10 bg-background px-2 text-muted-foreground">
+              {t("common.or")}
+            </span>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <SignInSocialButton
@@ -114,9 +118,9 @@ function LoginForm() {
       </form>
 
       <div className="text-center text-sm">
-        Don&apos;t have an account?{" "}
+        {t("auth.noAccount")}{" "}
         <Link to="/signup" className="underline underline-offset-4">
-          Sign up
+          {t("auth.goSignup")}
         </Link>
       </div>
     </div>

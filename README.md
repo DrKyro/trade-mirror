@@ -1,35 +1,59 @@
-# [TanStarter](https://github.com/mugnavo/tanstarter)
+# TradeMirror / 跟单镜像
 
-<!-- scaffold:description -->
+TradeMirror（跟单镜像）是一个统一的交易员监控与跟单执行平台，基于 TanStack Start 构建。合并了两个遗留系统 — **traderSpy**（交易员仓位轮询）和 **FollowTraderManager**（交易员跟单执行）— 到一个全栈应用中，使用 PostgreSQL 持久化，支持多交易所和双语 UI（zh-CN / en）。
 
-A minimal starter template for 🏝️ TanStack Start. [→ Preview here](https://tanstarter.mugnavo.com/)
+## Features
 
-```bash
-pnpm create mugnavo
-```
+- **Multi-exchange trader monitoring** — OKX, Bitget, Binance, Binance Futures, Bybit, Huobi, TraderWagon
+- **Follow execution engine** — dry-run and live modes with ratio/fixed order sizing, stop-loss, and risk controls
+- **Strategy analytics board** — closed-trade reconstruction, performance curves, distribution charts (replaces legacy Streamlit iframe)
+- **User strategy workspace** — per-user strategy lists backed by a shared global trader pool
+- **Notification system** — Feishu / Telegram / Discord alerts with screenshot delivery support
+- **Legacy compatibility** — WebSocket bridges for traderSpy (port 8011) and legacy messages (port 8001)
+- **Admin panel** — user management, system logs, runtime health monitoring
+- **Bilingual UI** — full zh-CN / en internationalization with language toggle
+- **Dark / light / system theme** — theme toggle with system preference detection
+
+## Tech Stack
 
 - [React 19](https://react.dev) + [React Compiler](https://react.dev/learn/react-compiler)
 - TanStack [Start](https://tanstack.com/start/latest) + [Router](https://tanstack.com/router/latest) + [Query](https://tanstack.com/query/latest)
-- [Tailwind CSS](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) + [Base UI](https://base-ui.com/) (base-rhea, [`--preset b1au68YWO`](https://ui.shadcn.com/create?preset=b1au68YWO&base=base&template=start&pointer=true))
+- [Tailwind CSS 4](https://tailwindcss.com/) + [shadcn/ui](https://ui.shadcn.com/) + [Base UI](https://base-ui.com/)
 - [Vite 8](https://vite.dev) + [Nitro v3](https://nitro.build/)
 - [Drizzle ORM](https://orm.drizzle.team/) + PostgreSQL
-- [Better Auth](https://better-auth.com/)
+- [Better Auth](https://better-auth.com/) (admin plugin, OAuth, email/password)
+- [CCXT](https://github.com/ccxt/ccxt) + platform-native APIs + Puppeteer (Bybit browser fallback)
 - [Oxlint](https://oxc.rs/docs/guide/usage/linter.html) + [Oxfmt](https://oxc.rs/docs/guide/usage/formatter.html)
-
-> [!TIP]
-> This template is also available as a monorepo, powered by [Vite+](https://viteplus.dev/) and pnpm. See [mugnavo/tanstarter-plus](https://github.com/mugnavo/tanstarter-plus).
 
 ## Getting Started
 
-1. [Use this template](https://github.com/new?template_name=tanstarter&template_owner=mugnavo) or create a project using our CLI:
+### Prerequisites
+
+- Node.js 22+
+- pnpm 10+
+- PostgreSQL 15+
+
+### Setup
+
+1. Install dependencies:
 
    ```bash
-   pnpm create mugnavo
+   pnpm install
    ```
 
-2. Create a `.env` file based on [`.env.example`](./.env.example).
+2. Create a `.env` file based on [`.env.example`](./.env.example):
 
-3. Generate the initial migration with drizzle-kit, then apply to your database:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. (Optional) Start a local PostgreSQL via Docker Compose:
+
+   ```bash
+   docker-compose up -d
+   ```
+
+4. Generate and apply database migrations:
 
    ```sh
    pnpm db generate
@@ -38,60 +62,94 @@ pnpm create mugnavo
 
    https://orm.drizzle.team/docs/migrations
 
-4. Run the development server:
+5. Run the development server:
 
    ```bash
    pnpm dev
    ```
 
-   The development server should now be running at [http://localhost:3000](http://localhost:3000).
+   The app runs at `http://localhost:3000` (or next available port).
+
+## Project Structure
+
+```
+src/
+├── components/          # Shared UI components
+│   ├── trading/         # Trading-specific forms & page shell
+│   └── ui/              # shadcn/ui primitives
+├── lib/
+│   ├── auth/            # Better Auth config, roles, middleware, admin
+│   ├── db/              # Drizzle ORM schema & connection
+│   ├── i18n.tsx         # Bilingual translation system
+│   ├── messages/        # Legacy message bridge & persistence
+│   ├── system/          # Notification service, log access
+│   └── trading/
+│       ├── adapters/        # Platform polling adapters (OKX, Bitget, Bybit, ...)
+│       ├── execution/       # Follow execution service & exchange adapters
+│       ├── engine.ts        # Position change detection & risk checks
+│       ├── runtime.ts       # Merged in-process runtime (scheduler, ingest, refresh)
+│       ├── store.ts         # PostgreSQL persistence layer
+│       ├── strategy-analytics.ts  # Closed-trade reconstruction & metrics
+│       ├── types.ts         # Domain types
+│       └── ...
+├── routes/
+│   ├── __root.tsx           # Root layout (I18nProvider, ThemeProvider)
+│   ├── index.tsx            # Landing page
+│   ├── about.tsx            # About page
+│   ├── _guest/              # Login, signup
+│   ├── _auth/app/           # Protected app routes
+│   │   ├── index.tsx        # Dashboard
+│   │   ├── strategies.tsx   # Strategy workspace
+│   │   ├── strategy-board.tsx  # Analytics board
+│   │   ├── teachers.tsx     # Trader management
+│   │   ├── system.tsx       # System monitoring
+│   │   ├── messages.tsx     # Legacy message browser
+│   │   ├── users.tsx        # Admin: user management
+│   │   └── logs.tsx         # Admin: system logs
+│   └── api/
+│       ├── auth/            # Better Auth API
+│       └── trading/         # Ingest & refresh endpoints
+└── scripts/             # Verification & utility scripts (37 files)
+```
+
+## Key Scripts
+
+| Command                   | Description                |
+| ------------------------- | -------------------------- |
+| `pnpm dev`                | Start dev server           |
+| `pnpm build`              | Production build           |
+| `pnpm start`              | Run production server      |
+| `pnpm lint`               | Oxlint with type checking  |
+| `pnpm format`             | Oxfmt format               |
+| `pnpm check`              | Format + lint              |
+| `pnpm db generate`        | Generate Drizzle migration |
+| `pnpm db migrate`         | Apply migration            |
+| `pnpm db studio`          | Open Drizzle Studio        |
+| `pnpm auth:generate`      | Regenerate auth schema     |
+| `pnpm auth:migrate`       | Generate schema + migrate  |
+| `pnpm ui add <component>` | Add shadcn/ui component    |
+
+## Environment Variables
+
+See [`.env.example`](./.env.example) for the full list. Key categories:
+
+- **Database** — `DATABASE_URL`
+- **Auth** — `BETTER_AUTH_SECRET`, `GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`
+- **Exchange credentials** — `BITGET_API_*`, `OKX_API_*`, `BINANCE_API_*`, `HUOBI_API_*`, `BYBIT_API_*`
+- **Notifications** — `ALERT_FEISHU_*`, `ALERT_TELEGRAM_*`, `ALERT_DISCORD_*`
+- **Legacy bridges** — `TRADER_SPY_WS_PORT` (8011), `LEGACY_MSG_WS_PORT` (8001)
+
+## Documentation
+
+- [PRD](./docs/prd.md) — 产品需求与系统设计
+- [迁移计划](./docs/migration-plan.md) — 遗留合并进度与验证
 
 ## Deploying to production
 
-[![Netlify Status](https://api.netlify.com/api/v1/badges/66acdee6-8e42-436f-9943-a67cad998f63/deploy-status)](https://app.netlify.com/projects/mugnavo-tanstarter/deploys)
-
-The [vite config](./vite.config.ts#L19-L20) is configured to use Nitro by default, which supports many [deployment presets](https://nitro.build/deploy) like Netlify, Vercel, Node.js, and more.
+The [vite config](./vite.config.ts) is configured to use Nitro by default, which supports many [deployment presets](https://nitro.build/deploy) like Netlify, Vercel, Node.js, and more.
 
 Refer to the [TanStack Start hosting docs](https://tanstack.com/start/latest/docs/framework/react/guide/hosting) for more information.
 
-## Issue watchlist
-
-- [Router/Start issues](https://github.com/TanStack/router/issues) - TanStack Start is in RC.
-- [Devtools releases](https://github.com/TanStack/devtools/releases) - TanStack Devtools is in alpha and may still have breaking changes.
-- [Nitro v3 beta](https://nitro.build/blog/v3-beta) - The template is configured with Nitro v3 beta by default.
-
-## Goodies
-
-#### Upgrading dependencies
-
-Dependency versions are pinned, so they may be slightly outdated when you create your project. To selectively upgrade packages, run `pnpm deps` or `pnx taze@latest -Ilw --maturity-period 3`.
-
-#### Scripts
-
-We use **pnpm** by default, but you can modify these scripts in [package.json](./package.json) to use your preferred package manager.
-
-- **`auth:generate`** - Regenerate the [auth db schema](./src/lib/db/schema/auth.schema.ts) if you've made changes to your Better Auth [config](./src/lib/auth/auth.ts).
-- **`db`** - Run [drizzle-kit](https://orm.drizzle.team/docs/kit-overview) commands. (e.g. `pnpm db generate`, `pnpm db studio`)
-- **`ui`** - The shadcn/ui CLI. (e.g. `pnpm ui add button`)
-- **`format`**, **`lint`** - Run Oxfmt and Oxlint, or both via `pnpm check`.
-- **`deps`** - Selectively upgrade dependencies via taze.
-
-#### Utilities
-
-- [`auth/middleware.ts`](./src/lib/auth/middleware.ts) - Sample middleware for enforcing authentication on server functions & API routes.
-- [`theme-toggle.tsx`](./src/components/theme-toggle.tsx), [`theme-provider.tsx`](./src/components/theme-provider.tsx) - A theme toggle and provider for toggling between light and dark mode.
-
 ## License
 
-Code in this template is public domain via [Unlicense](./LICENSE). Feel free to remove or replace for your own project.
-
-## Ecosystem
-
-- [@tanstack/intent](https://tanstack.com/intent/latest/docs/getting-started/quick-start-consumers) - Up-to-date skills for your AI agents, auto-synchronized from your installed dependencies.
-- [awesome-tanstack-start](https://github.com/Balastrong/awesome-tanstack-start) - A curated list of awesome resources for TanStack Start.
-- [shadcn/ui Directory](https://ui.shadcn.com/docs/directory), [MCP](https://ui.shadcn.com/docs/mcp), [shoogle.dev](https://shoogle.dev/) - Component directories & registries for shadcn/ui.
-
-## Related templates
-
-- [mugnavo/tanstarter-plus](https://github.com/mugnavo/tanstarter-plus) - A minimal monorepo version of this template, powered by Vite+ and pnpm workspaces.
-- [tsu-moe/tsu-stack](https://github.com/tsu-moe/tsu-stack) - An opinionated and batteries-included monorepo template from Luzefiru, built on tanstarter-plus, with Paraglide.js (i18n), Hono, oRPC, and more.
+[Unlicense](./LICENSE) — public domain.

@@ -8,6 +8,7 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { ThemeProvider } from "#/components/theme-provider";
 import { Toaster } from "#/components/ui/sonner";
 import type { AuthQueryResult } from "#/lib/auth/queries";
+import { I18nProvider, translate } from "#/lib/i18n";
 
 import appCss from "#/styles.css?url";
 
@@ -33,12 +34,12 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       },
       {
         // scaffold:title
-        title: "TanStarter",
+        title: translate("app.name"),
       },
       {
         name: "description",
         // scaffold:description
-        content: "A minimal starter template for 🏝️ TanStack Start.",
+        content: translate("app.description"),
       },
     ],
     links: [
@@ -56,15 +57,17 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 function RootDocument({ children }: { readonly children: React.ReactNode }) {
   return (
     // suppress since we're updating the "dark" class in ThemeProvider
-    <html lang="en" suppressHydrationWarning>
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body>
-        <ThemeProvider>
-          {children}
-          <Toaster richColors />
-        </ThemeProvider>
+        <I18nProvider>
+          <ThemeProvider>
+            {children}
+            <Toaster richColors />
+          </ThemeProvider>
+        </I18nProvider>
 
         <TanStackDevtools
           plugins={[

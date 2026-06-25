@@ -1,2 +1,3 @@
 export * from "./auth.schema";
-// export your other schemas here
+export * from "./messages.schema";
+export * from "./trading.schema";

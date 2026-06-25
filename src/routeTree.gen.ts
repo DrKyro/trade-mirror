@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as AboutRouteImport } from './routes/about'
 import { Route as GuestRouteRouteImport } from './routes/_guest/route'
 import { Route as AuthRouteRouteImport } from './routes/_auth/route'
 import { Route as IndexRouteImport } from './routes/index'
@@ -16,8 +17,23 @@ import { Route as GuestSignupRouteImport } from './routes/_guest/signup'
 import { Route as GuestLoginRouteImport } from './routes/_guest/login'
 import { Route as AuthAppRouteRouteImport } from './routes/_auth/app/route'
 import { Route as AuthAppIndexRouteImport } from './routes/_auth/app/index'
+import { Route as ApiTradingRefreshRouteImport } from './routes/api/trading/refresh'
+import { Route as ApiTradingIngestRouteImport } from './routes/api/trading/ingest'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as AuthAppUsersRouteImport } from './routes/_auth/app/users'
+import { Route as AuthAppTeachersRouteImport } from './routes/_auth/app/teachers'
+import { Route as AuthAppSystemRouteImport } from './routes/_auth/app/system'
+import { Route as AuthAppStrategyBoardRouteImport } from './routes/_auth/app/strategy-board'
+import { Route as AuthAppStrategiesRouteImport } from './routes/_auth/app/strategies'
+import { Route as AuthAppMessagesRouteImport } from './routes/_auth/app/messages'
+import { Route as AuthAppLogsRouteImport } from './routes/_auth/app/logs'
+import { Route as AuthAppTeachersTeacherIdLogsRouteImport } from './routes/_auth/app/teachers.$teacherId.logs'
 
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const GuestRouteRoute = GuestRouteRouteImport.update({
   id: '/_guest',
   getParentRoute: () => rootRouteImport,
@@ -51,64 +67,202 @@ const AuthAppIndexRoute = AuthAppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthAppRouteRoute,
 } as any)
+const ApiTradingRefreshRoute = ApiTradingRefreshRouteImport.update({
+  id: '/api/trading/refresh',
+  path: '/api/trading/refresh',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTradingIngestRoute = ApiTradingIngestRouteImport.update({
+  id: '/api/trading/ingest',
+  path: '/api/trading/ingest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthAppUsersRoute = AuthAppUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppTeachersRoute = AuthAppTeachersRouteImport.update({
+  id: '/teachers',
+  path: '/teachers',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppSystemRoute = AuthAppSystemRouteImport.update({
+  id: '/system',
+  path: '/system',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppStrategyBoardRoute = AuthAppStrategyBoardRouteImport.update({
+  id: '/strategy-board',
+  path: '/strategy-board',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppStrategiesRoute = AuthAppStrategiesRouteImport.update({
+  id: '/strategies',
+  path: '/strategies',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppMessagesRoute = AuthAppMessagesRouteImport.update({
+  id: '/messages',
+  path: '/messages',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppLogsRoute = AuthAppLogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppTeachersTeacherIdLogsRoute =
+  AuthAppTeachersTeacherIdLogsRouteImport.update({
+    id: '/$teacherId/logs',
+    path: '/$teacherId/logs',
+    getParentRoute: () => AuthAppTeachersRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
   '/app': typeof AuthAppRouteRouteWithChildren
   '/login': typeof GuestLoginRoute
   '/signup': typeof GuestSignupRoute
+  '/app/logs': typeof AuthAppLogsRoute
+  '/app/messages': typeof AuthAppMessagesRoute
+  '/app/strategies': typeof AuthAppStrategiesRoute
+  '/app/strategy-board': typeof AuthAppStrategyBoardRoute
+  '/app/system': typeof AuthAppSystemRoute
+  '/app/teachers': typeof AuthAppTeachersRouteWithChildren
+  '/app/users': typeof AuthAppUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/trading/ingest': typeof ApiTradingIngestRoute
+  '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/app/': typeof AuthAppIndexRoute
+  '/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/about': typeof AboutRoute
   '/login': typeof GuestLoginRoute
   '/signup': typeof GuestSignupRoute
+  '/app/logs': typeof AuthAppLogsRoute
+  '/app/messages': typeof AuthAppMessagesRoute
+  '/app/strategies': typeof AuthAppStrategiesRoute
+  '/app/strategy-board': typeof AuthAppStrategyBoardRoute
+  '/app/system': typeof AuthAppSystemRoute
+  '/app/teachers': typeof AuthAppTeachersRouteWithChildren
+  '/app/users': typeof AuthAppUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/trading/ingest': typeof ApiTradingIngestRoute
+  '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/app': typeof AuthAppIndexRoute
+  '/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_auth': typeof AuthRouteRouteWithChildren
   '/_guest': typeof GuestRouteRouteWithChildren
+  '/about': typeof AboutRoute
   '/_auth/app': typeof AuthAppRouteRouteWithChildren
   '/_guest/login': typeof GuestLoginRoute
   '/_guest/signup': typeof GuestSignupRoute
+  '/_auth/app/logs': typeof AuthAppLogsRoute
+  '/_auth/app/messages': typeof AuthAppMessagesRoute
+  '/_auth/app/strategies': typeof AuthAppStrategiesRoute
+  '/_auth/app/strategy-board': typeof AuthAppStrategyBoardRoute
+  '/_auth/app/system': typeof AuthAppSystemRoute
+  '/_auth/app/teachers': typeof AuthAppTeachersRouteWithChildren
+  '/_auth/app/users': typeof AuthAppUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/trading/ingest': typeof ApiTradingIngestRoute
+  '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/_auth/app/': typeof AuthAppIndexRoute
+  '/_auth/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/login' | '/signup' | '/api/auth/$' | '/app/'
+  fullPaths:
+    | '/'
+    | '/about'
+    | '/app'
+    | '/login'
+    | '/signup'
+    | '/app/logs'
+    | '/app/messages'
+    | '/app/strategies'
+    | '/app/strategy-board'
+    | '/app/system'
+    | '/app/teachers'
+    | '/app/users'
+    | '/api/auth/$'
+    | '/api/trading/ingest'
+    | '/api/trading/refresh'
+    | '/app/'
+    | '/app/teachers/$teacherId/logs'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/signup' | '/api/auth/$' | '/app'
+  to:
+    | '/'
+    | '/about'
+    | '/login'
+    | '/signup'
+    | '/app/logs'
+    | '/app/messages'
+    | '/app/strategies'
+    | '/app/strategy-board'
+    | '/app/system'
+    | '/app/teachers'
+    | '/app/users'
+    | '/api/auth/$'
+    | '/api/trading/ingest'
+    | '/api/trading/refresh'
+    | '/app'
+    | '/app/teachers/$teacherId/logs'
   id:
     | '__root__'
     | '/'
     | '/_auth'
     | '/_guest'
+    | '/about'
     | '/_auth/app'
     | '/_guest/login'
     | '/_guest/signup'
+    | '/_auth/app/logs'
+    | '/_auth/app/messages'
+    | '/_auth/app/strategies'
+    | '/_auth/app/strategy-board'
+    | '/_auth/app/system'
+    | '/_auth/app/teachers'
+    | '/_auth/app/users'
     | '/api/auth/$'
+    | '/api/trading/ingest'
+    | '/api/trading/refresh'
     | '/_auth/app/'
+    | '/_auth/app/teachers/$teacherId/logs'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthRouteRoute: typeof AuthRouteRouteWithChildren
   GuestRouteRoute: typeof GuestRouteRouteWithChildren
+  AboutRoute: typeof AboutRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiTradingIngestRoute: typeof ApiTradingIngestRoute
+  ApiTradingRefreshRoute: typeof ApiTradingRefreshRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_guest': {
       id: '/_guest'
       path: ''
@@ -158,6 +312,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAppIndexRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
+    '/api/trading/refresh': {
+      id: '/api/trading/refresh'
+      path: '/api/trading/refresh'
+      fullPath: '/api/trading/refresh'
+      preLoaderRoute: typeof ApiTradingRefreshRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/trading/ingest': {
+      id: '/api/trading/ingest'
+      path: '/api/trading/ingest'
+      fullPath: '/api/trading/ingest'
+      preLoaderRoute: typeof ApiTradingIngestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -165,14 +333,96 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_auth/app/users': {
+      id: '/_auth/app/users'
+      path: '/users'
+      fullPath: '/app/users'
+      preLoaderRoute: typeof AuthAppUsersRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/teachers': {
+      id: '/_auth/app/teachers'
+      path: '/teachers'
+      fullPath: '/app/teachers'
+      preLoaderRoute: typeof AuthAppTeachersRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/system': {
+      id: '/_auth/app/system'
+      path: '/system'
+      fullPath: '/app/system'
+      preLoaderRoute: typeof AuthAppSystemRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/strategy-board': {
+      id: '/_auth/app/strategy-board'
+      path: '/strategy-board'
+      fullPath: '/app/strategy-board'
+      preLoaderRoute: typeof AuthAppStrategyBoardRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/strategies': {
+      id: '/_auth/app/strategies'
+      path: '/strategies'
+      fullPath: '/app/strategies'
+      preLoaderRoute: typeof AuthAppStrategiesRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/messages': {
+      id: '/_auth/app/messages'
+      path: '/messages'
+      fullPath: '/app/messages'
+      preLoaderRoute: typeof AuthAppMessagesRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/logs': {
+      id: '/_auth/app/logs'
+      path: '/logs'
+      fullPath: '/app/logs'
+      preLoaderRoute: typeof AuthAppLogsRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/teachers/$teacherId/logs': {
+      id: '/_auth/app/teachers/$teacherId/logs'
+      path: '/$teacherId/logs'
+      fullPath: '/app/teachers/$teacherId/logs'
+      preLoaderRoute: typeof AuthAppTeachersTeacherIdLogsRouteImport
+      parentRoute: typeof AuthAppTeachersRoute
+    }
   }
 }
 
+interface AuthAppTeachersRouteChildren {
+  AuthAppTeachersTeacherIdLogsRoute: typeof AuthAppTeachersTeacherIdLogsRoute
+}
+
+const AuthAppTeachersRouteChildren: AuthAppTeachersRouteChildren = {
+  AuthAppTeachersTeacherIdLogsRoute: AuthAppTeachersTeacherIdLogsRoute,
+}
+
+const AuthAppTeachersRouteWithChildren = AuthAppTeachersRoute._addFileChildren(
+  AuthAppTeachersRouteChildren,
+)
+
 interface AuthAppRouteRouteChildren {
+  AuthAppLogsRoute: typeof AuthAppLogsRoute
+  AuthAppMessagesRoute: typeof AuthAppMessagesRoute
+  AuthAppStrategiesRoute: typeof AuthAppStrategiesRoute
+  AuthAppStrategyBoardRoute: typeof AuthAppStrategyBoardRoute
+  AuthAppSystemRoute: typeof AuthAppSystemRoute
+  AuthAppTeachersRoute: typeof AuthAppTeachersRouteWithChildren
+  AuthAppUsersRoute: typeof AuthAppUsersRoute
   AuthAppIndexRoute: typeof AuthAppIndexRoute
 }
 
 const AuthAppRouteRouteChildren: AuthAppRouteRouteChildren = {
+  AuthAppLogsRoute: AuthAppLogsRoute,
+  AuthAppMessagesRoute: AuthAppMessagesRoute,
+  AuthAppStrategiesRoute: AuthAppStrategiesRoute,
+  AuthAppStrategyBoardRoute: AuthAppStrategyBoardRoute,
+  AuthAppSystemRoute: AuthAppSystemRoute,
+  AuthAppTeachersRoute: AuthAppTeachersRouteWithChildren,
+  AuthAppUsersRoute: AuthAppUsersRoute,
   AuthAppIndexRoute: AuthAppIndexRoute,
 }
 
@@ -210,7 +460,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthRouteRoute: AuthRouteRouteWithChildren,
   GuestRouteRoute: GuestRouteRouteWithChildren,
+  AboutRoute: AboutRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiTradingIngestRoute: ApiTradingIngestRoute,
+  ApiTradingRefreshRoute: ApiTradingRefreshRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
