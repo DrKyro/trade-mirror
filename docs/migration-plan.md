@@ -82,7 +82,6 @@ This app is the TanStack Start rewrite target for:
   - `okx`
   - `bitget` (requires local Bitget credentials in env)
   - `binanceFutures` (request path implemented, but current network may still be region-blocked)
-  - `traderWagon`
   - `bybit` API path with browser fallback support
 - live refresh flow was validated for `okx`
   - `POST /api/trading/refresh`
@@ -107,13 +106,13 @@ This app is the TanStack Start rewrite target for:
     - order-class platforms incrementally adding a second follow relation on size increase
     - order-class platforms partially reducing matched follow relations on size decrease
     - amount-class platforms incrementally resizing aggregate follow relations on size increase / decrease
-  - live partial-reduce support is currently broader on Binance / OKX than on Bitget / Huobi because the latter two legacy APIs still operate primarily on whole tracked orders
+  - live partial-reduce support is currently broader on Binance / OKX than on Bitget because the latter legacy API still operates primarily on whole tracked orders
 - strategy workspace now has a user-scoped layer on top of the shared trader pool
   - trader ingest and refresh still operate on global trader records
   - `/app/strategies` now reads and mutates the current user workspace instead of the full global list
   - global trader deletion now also clears dependent teacher trace/follow references
   - trader creation now accepts the legacy minimal input shape (`id`, `name`, `platform`, `link`) and fills default avatar / strategy fields server-side, matching the old add-strategy workflow more closely
-  - trader creation can now also infer platform-specific default links when `link` is omitted (`okx`, `bitget`, `traderWagon`, `bybit`, `binanceFutures`, `binance`, `huobi`)
+  - trader creation can now also infer platform-specific default links when `link` is omitted (`okx`, `bitget`, `bybit`, `binanceFutures`, `binance`)
   - Binance link inference now preserves the old split between:
     - `binance` copy-trading portfolio detail pages (`portfolioId`)
     - `binanceFutures` leaderboard trader pages (`encryptedUid`)
@@ -184,7 +183,7 @@ This app is the TanStack Start rewrite target for:
     - refreshed positions
     - persisted historical position rows in `historyPositions`
 - `set -a; source .env; set +a; pnpm tsx scripts/verify-bulk-trader-refresh.ts`
-  - confirmed bulk refresh still updates both OKX and TraderWagon traders after the metadata-aware refresh change
+  - confirmed bulk refresh still updates OKX traders after the metadata-aware refresh change
 - `set -a; source .env; set +a; pnpm tsx scripts/verify-minimal-add-trader.ts`
   - confirmed minimal trader creation now derives:
     - platform-specific default `link` when omitted
@@ -196,7 +195,6 @@ This app is the TanStack Start rewrite target for:
   - confirmed platform-aware link inference for:
     - `okx`
     - `bitget`
-    - `traderWagon`
     - `bybit`
     - `binanceFutures`
     - `binance`
@@ -258,11 +256,10 @@ This app is the TanStack Start rewrite target for:
 
 ## Next migration slices
 
-1. Continue porting remaining trader polling adapters from `traderSpy/spy/*.mjs` (`bybit`, `traderWagon`, and any puppeteer-only fallbacks)
-2. Port remaining real teacher exchange execution adapters from `FollowTraderManager/server/backend/class/exchange/*.mjs` (`huobi` still missing)
-3. Add safer validation / audit logs that surface live-vs-dry-run execution decisions in runtime events
-4. Expand notification parity beyond the first sink layer
+1. Continue porting remaining trader polling adapters from `traderSpy/spy/*.mjs` (`bybit` and any puppeteer-only fallbacks)
+2. Add safer validation / audit logs that surface live-vs-dry-run execution decisions in runtime events
+3. Expand notification parity beyond the first sink layer
    - legacy image attachments / richer post bodies
    - source/database-driven routing instead of env-only routing
    - operational alerts for browser-fallback/login-required flows
-5. Continue replacing leftover legacy naming and status semantics from the old Mongo/WS architecture
+4. Continue replacing leftover legacy naming and status semantics from the old Mongo/WS architecture

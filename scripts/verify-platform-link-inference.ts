@@ -13,11 +13,6 @@ function main() {
       platform: "bitget",
     }),
     createTraderRecordFromDraft({
-      id: "11585",
-      name: "TraderWagon Trader",
-      platform: "traderWagon",
-    }),
-    createTraderRecordFromDraft({
       id: "mark-123",
       name: "Bybit Trader",
       platform: "bybit",
@@ -30,7 +25,7 @@ function main() {
     createTraderRecordFromDraft({
       id: "PORT123",
       name: "Binance Copy Trader",
-      platform: "binance",
+      platform: "binanceFutures",
     }),
   ];
 

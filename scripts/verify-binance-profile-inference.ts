@@ -34,13 +34,13 @@ async function main() {
   try {
     const profile = await inferTraderProfile({
       id: "BINANCE-INFER-1",
-      platform: "binance",
+      platform: "binanceFutures",
     });
     const trader = createTraderRecordFromDraft(
       {
         id: "BINANCE-INFER-1",
         name: "Fallback Binance Name",
-        platform: "binance",
+        platform: "binanceFutures",
       },
       {
         profile,

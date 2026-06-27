@@ -43,15 +43,10 @@ const legacyPayloadSchema = z.object({
       id: z.string().min(1),
       name: z.string().min(1),
       nickName: z.string().optional(),
-      platform: z.enum([
-        "okx",
-        "bitget",
-        "binance",
-        "bybit",
-        "huobi",
-        "binanceFutures",
-        "traderWagon",
-      ]),
+      platform: z
+        .enum(["okx", "bitget", "binance", "bybit", "huobi", "binanceFutures", "traderWagon"])
+        .transform((v) => (v === "binance" ? "binanceFutures" : v))
+        .pipe(z.enum(["okx", "bitget", "bybit", "binanceFutures"])),
       link: z.url(),
       avatar: z.url(),
       sign: z.string().optional(),

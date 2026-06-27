@@ -642,8 +642,8 @@ function useSystemText() {
     screenshotPath: isZh ? "截图路径" : "Screenshot path",
     traderRefreshScheduler: isZh ? "交易员刷新调度器" : "Trader Refresh Scheduler",
     traderRefreshSchedulerDescription: isZh
-      ? "这是从 traderSpy 迁过来的后台轮询任务，会持续刷新 OKX、Bitget、Binance Futures、Bybit 和 TraderWagon 的交易员数据，不需要手动逐个点刷新。"
-      : "Background polling loop migrated from traderSpy. It keeps supported traders refreshed across OKX, Bitget, Binance Futures, Bybit, and TraderWagon without requiring manual refresh clicks.",
+      ? "这是从 traderSpy 迁过来的后台轮询任务，会持续刷新 OKX、Bitget、Binance Futures 和 Bybit 的交易员数据，不需要手动逐个点刷新。"
+      : "Background polling loop migrated from traderSpy. It keeps supported traders refreshed across OKX, Bitget, Binance Futures, and Bybit without requiring manual refresh clicks.",
     bulkRefreshFinishedWithFailures: (count: number) =>
       isZh
         ? `批量刷新完成，但有 ${count} 个失败项。请到系统事件里查看详情。`

@@ -38,6 +38,14 @@ function AppLayout() {
             <Button
               variant="ghost"
               size="sm"
+              render={<Link to="/app/discover" />}
+              nativeButton={false}
+            >
+              {t("nav.discover")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               render={<Link to="/app/strategies" />}
               nativeButton={false}
             >
@@ -74,6 +82,14 @@ function AppLayout() {
               nativeButton={false}
             >
               {t("nav.system")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              render={<Link to="/app/api-health" />}
+              nativeButton={false}
+            >
+              {t("nav.apiHealth")}
             </Button>
             {isAdminUser(user) ? (
               <>

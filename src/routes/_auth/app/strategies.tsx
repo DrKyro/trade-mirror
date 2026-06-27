@@ -722,17 +722,17 @@ function useStrategiesText() {
     waiting: isZh ? "等待中" : "waiting",
     running: isZh ? "运行中" : "running",
     offline: isZh ? "离线" : "offline",
-    myStrategies: isZh ? "我的策略" : "My strategies",
-    globalTraderPool: isZh ? "全局交易员池" : "Global trader pool",
+    myStrategies: isZh ? "我的跟单配置" : "My follow config",
+    globalTraderPool: isZh ? "共享交易员池" : "Shared trader pool",
     myStrategiesDescription: isZh
-      ? "这里是当前登录用户自己的策略工作区，对应旧后台里的用户专属工作台。"
-      : "This is the current signed-in user's working strategy set, matching the legacy dashboard's user workspace idea.",
+      ? "这里是当前登录用户自己的跟单配置工作区，用来管理要跟踪的交易员和执行参数。"
+      : "This is the current signed-in user's follow configuration workspace for tracked traders and execution parameters.",
     globalTraderPoolDescription: isZh
       ? "这里展示整个合并运行时共享的交易员记录，供抓取、刷新和交易员跟单执行复用。"
       : "Shared trader records used by ingest, refresh, and trader follow execution across the merged runtime.",
     noWorkspaceStrategies: isZh
-      ? "当前用户还没有关联任何策略。可以先在下面添加一个交易员，初始化工作区。"
-      : "No strategies linked to this user yet. Add one below to seed the workspace.",
+      ? "当前用户还没有配置任何跟单交易员。可以先在下面添加一个交易员，初始化工作区。"
+      : "No followed traders configured for this user yet. Add one below to seed the workspace.",
     openOriginalTraderPage: isZh ? "打开原始交易员页面" : "Open original trader page",
     riskLabel: (value: number) => (isZh ? `风险 ${value.toFixed(2)}` : `risk ${value.toFixed(2)}`),
     lastUpdateLabel: (value: string) => (isZh ? `最近更新 ${value}` : `last update ${value}`),
@@ -753,10 +753,10 @@ function useStrategiesText() {
     sharedOnly: isZh ? "仅共享池" : "shared only",
     neverRefreshed: isZh ? "尚未刷新" : "never refreshed",
     never: isZh ? "从未" : "never",
-    strategySettings: isZh ? "策略设置" : "Strategy settings",
+    strategySettings: isZh ? "基础配置" : "Base config",
     strategySettingsDescription: isZh
-      ? "旧版策略弹窗的核心配置已经内嵌到这里，方便直接在工作区里编辑。"
-      : "Legacy strategy dialog behavior moved inline here for faster workspace edits.",
+      ? "这里维护这位交易员在你工作区里的显示名称、状态和基础风险参数。"
+      : "Maintain this trader's display name, status, and base risk parameters in your workspace.",
     displayName: isZh ? "显示名称" : "Display name",
     status: isZh ? "状态" : "Status",
     followStatusOption: isZh ? "跟随" : "follow",
@@ -764,7 +764,7 @@ function useStrategiesText() {
     disabledStatusOption: isZh ? "停用" : "disabled",
     riskRate: isZh ? "风险系数" : "Risk rate",
     saving: isZh ? "保存中..." : "Saving...",
-    saveStrategySettings: isZh ? "保存策略设置" : "Save strategy settings",
+    saveStrategySettings: isZh ? "保存基础配置" : "Save base config",
     addTeacherFirst: isZh ? "请先添加交易员账户" : "Add a trader first",
     hideFollowConfig: isZh ? "收起跟单配置" : "Hide follow config",
     editTeacherFollowConfig: isZh ? "编辑交易员跟单配置" : "Edit trader follow config",

@@ -27,7 +27,10 @@ import { Route as AuthAppStrategyBoardRouteImport } from './routes/_auth/app/str
 import { Route as AuthAppStrategiesRouteImport } from './routes/_auth/app/strategies'
 import { Route as AuthAppMessagesRouteImport } from './routes/_auth/app/messages'
 import { Route as AuthAppLogsRouteImport } from './routes/_auth/app/logs'
+import { Route as AuthAppDiscoverRouteImport } from './routes/_auth/app/discover'
+import { Route as AuthAppApiHealthRouteImport } from './routes/_auth/app/api-health'
 import { Route as AuthAppTeachersTeacherIdLogsRouteImport } from './routes/_auth/app/teachers.$teacherId.logs'
+import { Route as AuthAppBacktestPlatformTraderIdRouteImport } from './routes/_auth/app/backtest.$platform.$traderId'
 
 const AboutRoute = AboutRouteImport.update({
   id: '/about',
@@ -117,11 +120,27 @@ const AuthAppLogsRoute = AuthAppLogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => AuthAppRouteRoute,
 } as any)
+const AuthAppDiscoverRoute = AuthAppDiscoverRouteImport.update({
+  id: '/discover',
+  path: '/discover',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppApiHealthRoute = AuthAppApiHealthRouteImport.update({
+  id: '/api-health',
+  path: '/api-health',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
 const AuthAppTeachersTeacherIdLogsRoute =
   AuthAppTeachersTeacherIdLogsRouteImport.update({
     id: '/$teacherId/logs',
     path: '/$teacherId/logs',
     getParentRoute: () => AuthAppTeachersRoute,
+  } as any)
+const AuthAppBacktestPlatformTraderIdRoute =
+  AuthAppBacktestPlatformTraderIdRouteImport.update({
+    id: '/backtest/$platform/$traderId',
+    path: '/backtest/$platform/$traderId',
+    getParentRoute: () => AuthAppRouteRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -130,6 +149,8 @@ export interface FileRoutesByFullPath {
   '/app': typeof AuthAppRouteRouteWithChildren
   '/login': typeof GuestLoginRoute
   '/signup': typeof GuestSignupRoute
+  '/app/api-health': typeof AuthAppApiHealthRoute
+  '/app/discover': typeof AuthAppDiscoverRoute
   '/app/logs': typeof AuthAppLogsRoute
   '/app/messages': typeof AuthAppMessagesRoute
   '/app/strategies': typeof AuthAppStrategiesRoute
@@ -141,6 +162,7 @@ export interface FileRoutesByFullPath {
   '/api/trading/ingest': typeof ApiTradingIngestRoute
   '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/app/': typeof AuthAppIndexRoute
+  '/app/backtest/$platform/$traderId': typeof AuthAppBacktestPlatformTraderIdRoute
   '/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRoutesByTo {
@@ -148,6 +170,8 @@ export interface FileRoutesByTo {
   '/about': typeof AboutRoute
   '/login': typeof GuestLoginRoute
   '/signup': typeof GuestSignupRoute
+  '/app/api-health': typeof AuthAppApiHealthRoute
+  '/app/discover': typeof AuthAppDiscoverRoute
   '/app/logs': typeof AuthAppLogsRoute
   '/app/messages': typeof AuthAppMessagesRoute
   '/app/strategies': typeof AuthAppStrategiesRoute
@@ -159,6 +183,7 @@ export interface FileRoutesByTo {
   '/api/trading/ingest': typeof ApiTradingIngestRoute
   '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/app': typeof AuthAppIndexRoute
+  '/app/backtest/$platform/$traderId': typeof AuthAppBacktestPlatformTraderIdRoute
   '/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRoutesById {
@@ -170,6 +195,8 @@ export interface FileRoutesById {
   '/_auth/app': typeof AuthAppRouteRouteWithChildren
   '/_guest/login': typeof GuestLoginRoute
   '/_guest/signup': typeof GuestSignupRoute
+  '/_auth/app/api-health': typeof AuthAppApiHealthRoute
+  '/_auth/app/discover': typeof AuthAppDiscoverRoute
   '/_auth/app/logs': typeof AuthAppLogsRoute
   '/_auth/app/messages': typeof AuthAppMessagesRoute
   '/_auth/app/strategies': typeof AuthAppStrategiesRoute
@@ -181,6 +208,7 @@ export interface FileRoutesById {
   '/api/trading/ingest': typeof ApiTradingIngestRoute
   '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/_auth/app/': typeof AuthAppIndexRoute
+  '/_auth/app/backtest/$platform/$traderId': typeof AuthAppBacktestPlatformTraderIdRoute
   '/_auth/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRouteTypes {
@@ -191,6 +219,8 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/signup'
+    | '/app/api-health'
+    | '/app/discover'
     | '/app/logs'
     | '/app/messages'
     | '/app/strategies'
@@ -202,6 +232,7 @@ export interface FileRouteTypes {
     | '/api/trading/ingest'
     | '/api/trading/refresh'
     | '/app/'
+    | '/app/backtest/$platform/$traderId'
     | '/app/teachers/$teacherId/logs'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -209,6 +240,8 @@ export interface FileRouteTypes {
     | '/about'
     | '/login'
     | '/signup'
+    | '/app/api-health'
+    | '/app/discover'
     | '/app/logs'
     | '/app/messages'
     | '/app/strategies'
@@ -220,6 +253,7 @@ export interface FileRouteTypes {
     | '/api/trading/ingest'
     | '/api/trading/refresh'
     | '/app'
+    | '/app/backtest/$platform/$traderId'
     | '/app/teachers/$teacherId/logs'
   id:
     | '__root__'
@@ -230,6 +264,8 @@ export interface FileRouteTypes {
     | '/_auth/app'
     | '/_guest/login'
     | '/_guest/signup'
+    | '/_auth/app/api-health'
+    | '/_auth/app/discover'
     | '/_auth/app/logs'
     | '/_auth/app/messages'
     | '/_auth/app/strategies'
@@ -241,6 +277,7 @@ export interface FileRouteTypes {
     | '/api/trading/ingest'
     | '/api/trading/refresh'
     | '/_auth/app/'
+    | '/_auth/app/backtest/$platform/$traderId'
     | '/_auth/app/teachers/$teacherId/logs'
   fileRoutesById: FileRoutesById
 }
@@ -382,12 +419,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAppLogsRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
+    '/_auth/app/discover': {
+      id: '/_auth/app/discover'
+      path: '/discover'
+      fullPath: '/app/discover'
+      preLoaderRoute: typeof AuthAppDiscoverRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/api-health': {
+      id: '/_auth/app/api-health'
+      path: '/api-health'
+      fullPath: '/app/api-health'
+      preLoaderRoute: typeof AuthAppApiHealthRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
     '/_auth/app/teachers/$teacherId/logs': {
       id: '/_auth/app/teachers/$teacherId/logs'
       path: '/$teacherId/logs'
       fullPath: '/app/teachers/$teacherId/logs'
       preLoaderRoute: typeof AuthAppTeachersTeacherIdLogsRouteImport
       parentRoute: typeof AuthAppTeachersRoute
+    }
+    '/_auth/app/backtest/$platform/$traderId': {
+      id: '/_auth/app/backtest/$platform/$traderId'
+      path: '/backtest/$platform/$traderId'
+      fullPath: '/app/backtest/$platform/$traderId'
+      preLoaderRoute: typeof AuthAppBacktestPlatformTraderIdRouteImport
+      parentRoute: typeof AuthAppRouteRoute
     }
   }
 }
@@ -405,6 +463,8 @@ const AuthAppTeachersRouteWithChildren = AuthAppTeachersRoute._addFileChildren(
 )
 
 interface AuthAppRouteRouteChildren {
+  AuthAppApiHealthRoute: typeof AuthAppApiHealthRoute
+  AuthAppDiscoverRoute: typeof AuthAppDiscoverRoute
   AuthAppLogsRoute: typeof AuthAppLogsRoute
   AuthAppMessagesRoute: typeof AuthAppMessagesRoute
   AuthAppStrategiesRoute: typeof AuthAppStrategiesRoute
@@ -413,9 +473,12 @@ interface AuthAppRouteRouteChildren {
   AuthAppTeachersRoute: typeof AuthAppTeachersRouteWithChildren
   AuthAppUsersRoute: typeof AuthAppUsersRoute
   AuthAppIndexRoute: typeof AuthAppIndexRoute
+  AuthAppBacktestPlatformTraderIdRoute: typeof AuthAppBacktestPlatformTraderIdRoute
 }
 
 const AuthAppRouteRouteChildren: AuthAppRouteRouteChildren = {
+  AuthAppApiHealthRoute: AuthAppApiHealthRoute,
+  AuthAppDiscoverRoute: AuthAppDiscoverRoute,
   AuthAppLogsRoute: AuthAppLogsRoute,
   AuthAppMessagesRoute: AuthAppMessagesRoute,
   AuthAppStrategiesRoute: AuthAppStrategiesRoute,
@@ -424,6 +487,7 @@ const AuthAppRouteRouteChildren: AuthAppRouteRouteChildren = {
   AuthAppTeachersRoute: AuthAppTeachersRouteWithChildren,
   AuthAppUsersRoute: AuthAppUsersRoute,
   AuthAppIndexRoute: AuthAppIndexRoute,
+  AuthAppBacktestPlatformTraderIdRoute: AuthAppBacktestPlatformTraderIdRoute,
 }
 
 const AuthAppRouteRouteWithChildren = AuthAppRouteRoute._addFileChildren(

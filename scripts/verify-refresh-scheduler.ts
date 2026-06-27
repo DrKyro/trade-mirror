@@ -16,7 +16,6 @@ async function main() {
         stoppedRunning: stopped.running,
         supportedPlatforms: started.supportedPlatforms,
         hasBybit: started.supportedPlatforms.includes("bybit"),
-        hasTraderWagon: started.supportedPlatforms.includes("traderWagon"),
       },
       null,
       2,

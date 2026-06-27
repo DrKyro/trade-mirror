@@ -14,16 +14,21 @@ import { user } from "#/lib/db/schema/auth.schema";
 import type {
   AppRuntimeStatus,
   ExecutionMode,
-  TeacherEquityHistory,
   FollowOrderRelation,
   PositionSnapshot,
-  TraderHistoryPosition,
   RuntimeEvent,
+  TeacherEquityHistory,
   TeacherCredentials,
   TeacherPositionHistoryEntry,
   TeacherSettings,
-  TradingRuntimeMetadata,
   TraceTraderSetting,
+  TraderBacktestSummary,
+  TraderBacktestTimelinePoint,
+  TraderBacktestTrade,
+  TraderHistoryPosition,
+  TraderSyncPriority,
+  TraderSyncStatus,
+  TradingRuntimeMetadata,
 } from "#/lib/trading/types";
 
 export const trader = pgTable(
@@ -115,6 +120,65 @@ export const userTraderWorkspace = pgTable("user_trader_workspace", {
   initializedAt: timestamp("initialized_at").defaultNow().notNull(),
 });
 
+export const traderSyncState = pgTable(
+  "trader_sync_state",
+  {
+    traderId: text("trader_id")
+      .primaryKey()
+      .references(() => trader.id, { onDelete: "cascade" }),
+    priority: text("priority").$type<TraderSyncPriority>().notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    fetchIntervalMs: integer("fetch_interval_ms").notNull(),
+    nextFetchAt: timestamp("next_fetch_at"),
+    lastAttemptAt: timestamp("last_attempt_at"),
+    lastSuccessAt: timestamp("last_success_at"),
+    lastStatus: text("last_status").$type<TraderSyncStatus>().notNull(),
+    lastError: text("last_error"),
+    failCount: integer("fail_count").default(0).notNull(),
+    lockedUntil: timestamp("locked_until"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("trader_sync_state_priority_idx").on(table.priority),
+    index("trader_sync_state_next_fetch_at_idx").on(table.nextFetchAt),
+    index("trader_sync_state_locked_until_idx").on(table.lockedUntil),
+  ],
+);
+
+export const traderBacktestRun = pgTable(
+  "trader_backtest_run",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    traderId: text("trader_id").notNull(),
+    uniqueName: text("unique_name").notNull(),
+    nickName: text("nick_name").notNull(),
+    mode: text("mode").notNull(),
+    window: text("window").notNull(),
+    initialBalance: integer("initial_balance_milli").notNull(),
+    summary: jsonb("summary").$type<TraderBacktestSummary>().notNull(),
+    timeline: jsonb("timeline").$type<TraderBacktestTimelinePoint[]>().notNull(),
+    trades: jsonb("trades").$type<TraderBacktestTrade[]>().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("trader_backtest_run_user_id_idx").on(table.userId),
+    index("trader_backtest_run_platform_trader_idx").on(table.platform, table.traderId),
+    index("trader_backtest_run_created_at_idx").on(table.createdAt),
+  ],
+);
+
 export const runtimeState = pgTable("runtime_state", {
   id: text("id").primaryKey(),
   mongoConnected: boolean("mongo_connected").notNull(),
@@ -175,6 +239,13 @@ export const traderRelations = relations(trader, ({ many }) => ({
   userLinks: many(userTrader),
 }));
 
+export const traderBacktestRunRelations = relations(traderBacktestRun, ({ one }) => ({
+  user: one(user, {
+    fields: [traderBacktestRun.userId],
+    references: [user.id],
+  }),
+}));
+
 export const userTraderRelations = relations(userTrader, ({ one }) => ({
   user: one(user, {
     fields: [userTrader.userId],
@@ -193,6 +264,13 @@ export const userTraderWorkspaceRelations = relations(userTraderWorkspace, ({ on
   }),
 }));
 
+export const traderSyncStateRelations = relations(traderSyncState, ({ one }) => ({
+  trader: one(trader, {
+    fields: [traderSyncState.traderId],
+    references: [trader.id],
+  }),
+}));
+
 export const userTradingRelations = relations(user, ({ many }) => ({
   teachers: many(teacher),
   traderLinks: many(userTrader),
@@ -203,6 +281,7 @@ export type TraderRow = typeof trader.$inferSelect;
 export type TeacherRow = typeof teacher.$inferSelect;
 export type UserTraderRow = typeof userTrader.$inferSelect;
 export type UserTraderWorkspaceRow = typeof userTraderWorkspace.$inferSelect;
+export type TraderSyncStateRow = typeof traderSyncState.$inferSelect;
 export type RuntimeStateRow = typeof runtimeState.$inferSelect;
 export type RuntimeEventRow = typeof runtimeEvent.$inferSelect;
 export type MarketCandleRow = typeof marketCandle.$inferSelect;

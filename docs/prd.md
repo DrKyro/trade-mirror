@@ -12,7 +12,7 @@ TradeMirror（跟单镜像）是一个统一的交易员监控与跟单执行系
 
 ### 支持的交易所
 
-OKX、Bitget、Binance、Binance Futures、Bybit、Huobi、TraderWagon
+OKX、Bitget、Binance、Binance Futures、Bybit
 
 ---
 
@@ -33,7 +33,7 @@ OKX、Bitget、Binance、Binance Futures、Bybit、Huobi、TraderWagon
 - **下单模式** — `ratio`（按交易员仓位比例）或 `fixed`（固定金额）
 - **风控参数** — `accountMaxRiskRate`、`safeMarginRate`、`limitRiskRatio`、按策略配置的 `stopLossUsdt` 和 `stopLossPositionValueRate`
 - **增量执行** — 仓位增加时追加下单，仓位减少时部分平仓
-- **平台执行适配器** — Bitget、OKX、Binance、Huobi（实盘）；其他交易所回退到 dry-run
+- **平台执行适配器** — Bitget、OKX、Binance（实盘）；其他交易所回退到 dry-run
 - **跟单关系追踪** — 将本地订单映射到交易员订单，支持重映射和清除
 - **权益历史** — 按分钟/小时/天粒度记录权益快照
 - **持仓历史** — 持久化开仓/平仓事件，包含盈亏和拒绝原因
@@ -199,7 +199,7 @@ Better Auth 管理的表：`user`、`session`、`account`、`verification`。
 ## 8. 未来路线图
 
 1. 迁移遗留 `traderSpy` 中剩余的交易员轮询适配器
-2. 完成 Huobi 实盘执行适配器
+2. 完善 Bybit 实盘执行适配器
 3. K 线驱动的回测层（收益 vs 最大回撤、止损曲线、模拟余额仿真）
 4. 增强实盘 vs 模拟执行决策的审计日志
 5. 基于数据库的通知路由（不再仅依赖环境变量）

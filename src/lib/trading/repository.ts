@@ -78,7 +78,7 @@ export const $getTeacherEvents = createServerFn({ method: "GET" })
 const addTraderSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  platform: z.enum(["okx", "bitget", "binance", "bybit", "huobi", "binanceFutures", "traderWagon"]),
+  platform: z.enum(["okx", "bitget", "bybit", "binanceFutures"]),
   link: z.url().optional(),
   avatar: z.url().optional(),
   strategyName: z.string().min(1).optional(),
@@ -198,7 +198,7 @@ export const $stopRefreshScheduler = createServerFn({
 const addTeacherSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
-  platform: z.enum(["okx", "bitget", "binance", "bybit", "huobi", "binanceFutures", "traderWagon"]),
+  platform: z.enum(["okx", "bitget", "bybit", "binanceFutures"]),
   executionMode: z.enum(["dry-run", "live"]).default("dry-run"),
   credentials: z
     .object({
@@ -414,3 +414,8 @@ export const $ingestTraderSnapshot = createServerFn({
     const runtime = getTradingRuntime();
     return runtime.ingestTraderSnapshot(data.traderId, data.positions);
   });
+
+export const $probeApiHealth = createServerFn({ method: "GET" }).handler(async () => {
+  const { probeAllApiEndpoints } = await import("#/lib/trading/api-health");
+  return probeAllApiEndpoints();
+});

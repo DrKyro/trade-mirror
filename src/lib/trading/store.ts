@@ -1,5 +1,5 @@
 import "@tanstack/react-start/server-only";
-import { and, asc, desc, eq, exists, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, isNull, lte, or, sql } from "drizzle-orm";
 
 import { db } from "#/lib/db";
 import {
@@ -8,11 +8,17 @@ import {
   runtimeState,
   teacher,
   trader,
+  traderSyncState,
   TRADING_RUNTIME_STATE_ID,
   userTrader,
   userTraderWorkspace,
 } from "#/lib/db/schema/trading.schema";
 import { mockRuntimeStatus, mockTeachers, mockTraders } from "#/lib/trading/mock-data";
+import {
+  getNextTraderSyncAt,
+  getTraderSyncIntervalMs,
+  getTraderSyncPriority,
+} from "#/lib/trading/refresh-scheduler";
 import type {
   AppRuntimeStatus,
   EquityHistoryPoint,
@@ -21,11 +27,15 @@ import type {
   TeacherEquityHistory,
   TeacherRecord,
   TraderRecord,
+  TraderSyncPriority,
+  TraderSyncState,
+  TraderSyncStatus,
 } from "#/lib/trading/types";
 
 const SCALE = 1_000;
 const RATIO_SCALE = 10_000;
 const EVENT_LIMIT = 40;
+let traderSyncStateSchemaReady: Promise<void> | null = null;
 
 function toMilli(value: number) {
   return Math.round(value * SCALE);
@@ -108,6 +118,62 @@ function deserializeTrader(row: typeof trader.$inferSelect): TraderRecord {
     positionUpdateTime: toTimestamp(row.positionUpdateTime),
     positions: row.positions,
     historyPositions: row.historyPositions ?? [],
+  };
+}
+
+function createDefaultTraderSyncStateRecord(
+  traderRecord: Pick<TraderRecord, "id" | "strategyStatus">,
+  now = Date.now(),
+): TraderSyncState {
+  const priority = getTraderSyncPriority(traderRecord);
+  return {
+    traderId: traderRecord.id,
+    priority,
+    enabled: true,
+    fetchIntervalMs: getTraderSyncIntervalMs(priority),
+    nextFetchAt: now,
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    lastStatus: "idle",
+    lastError: null,
+    failCount: 0,
+    lockedUntil: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function serializeTraderSyncState(syncState: TraderSyncState) {
+  return {
+    traderId: syncState.traderId,
+    priority: syncState.priority,
+    enabled: syncState.enabled,
+    fetchIntervalMs: syncState.fetchIntervalMs,
+    nextFetchAt: toDate(syncState.nextFetchAt),
+    lastAttemptAt: toDate(syncState.lastAttemptAt),
+    lastSuccessAt: toDate(syncState.lastSuccessAt),
+    lastStatus: syncState.lastStatus,
+    lastError: syncState.lastError,
+    failCount: syncState.failCount,
+    lockedUntil: toDate(syncState.lockedUntil),
+  };
+}
+
+function deserializeTraderSyncState(row: typeof traderSyncState.$inferSelect): TraderSyncState {
+  return {
+    traderId: row.traderId,
+    priority: row.priority,
+    enabled: row.enabled,
+    fetchIntervalMs: row.fetchIntervalMs,
+    nextFetchAt: toTimestamp(row.nextFetchAt),
+    lastAttemptAt: toTimestamp(row.lastAttemptAt),
+    lastSuccessAt: toTimestamp(row.lastSuccessAt),
+    lastStatus: row.lastStatus,
+    lastError: row.lastError,
+    failCount: row.failCount,
+    lockedUntil: toTimestamp(row.lockedUntil),
+    createdAt: row.createdAt.getTime(),
+    updatedAt: row.updatedAt.getTime(),
   };
 }
 
@@ -274,14 +340,131 @@ async function seedIfNeeded() {
   });
 }
 
+async function ensureTraderSyncStateTable() {
+  if (!traderSyncStateSchemaReady) {
+    traderSyncStateSchemaReady = (async () => {
+      await db.execute(
+        sql.raw(`
+        CREATE TABLE IF NOT EXISTS "trader_sync_state" (
+          "trader_id" text PRIMARY KEY NOT NULL,
+          "priority" text NOT NULL,
+          "enabled" boolean DEFAULT true NOT NULL,
+          "fetch_interval_ms" integer NOT NULL,
+          "next_fetch_at" timestamp,
+          "last_attempt_at" timestamp,
+          "last_success_at" timestamp,
+          "last_status" text NOT NULL,
+          "last_error" text,
+          "fail_count" integer DEFAULT 0 NOT NULL,
+          "locked_until" timestamp,
+          "created_at" timestamp DEFAULT now() NOT NULL,
+          "updated_at" timestamp DEFAULT now() NOT NULL,
+          CONSTRAINT "trader_sync_state_trader_id_trader_id_fk"
+            FOREIGN KEY ("trader_id") REFERENCES "trader"("id") ON DELETE cascade
+        )
+      `),
+      );
+      await db.execute(
+        sql.raw(
+          `CREATE INDEX IF NOT EXISTS "trader_sync_state_priority_idx" ON "trader_sync_state" ("priority")`,
+        ),
+      );
+      await db.execute(
+        sql.raw(
+          `CREATE INDEX IF NOT EXISTS "trader_sync_state_next_fetch_at_idx" ON "trader_sync_state" ("next_fetch_at")`,
+        ),
+      );
+      await db.execute(
+        sql.raw(
+          `CREATE INDEX IF NOT EXISTS "trader_sync_state_locked_until_idx" ON "trader_sync_state" ("locked_until")`,
+        ),
+      );
+    })().catch((error) => {
+      traderSyncStateSchemaReady = null;
+      throw error;
+    });
+  }
+
+  await traderSyncStateSchemaReady;
+}
+
+async function ensureTraderSyncStates() {
+  await ensureTraderSyncStateTable();
+  const traders = await db
+    .select({
+      id: trader.id,
+      strategyStatus: trader.strategyStatus,
+    })
+    .from(trader);
+
+  if (traders.length === 0) {
+    return;
+  }
+
+  const existingRows = await db
+    .select({ traderId: traderSyncState.traderId })
+    .from(traderSyncState);
+  const existingTraderIds = new Set(existingRows.map((row) => row.traderId));
+
+  const missingStates = traders
+    .filter((row) => !existingTraderIds.has(row.id))
+    .map((row) =>
+      serializeTraderSyncState(
+        createDefaultTraderSyncStateRecord({
+          id: row.id,
+          strategyStatus: row.strategyStatus as TraderRecord["strategyStatus"],
+        }),
+      ),
+    );
+
+  if (missingStates.length > 0) {
+    await db.insert(traderSyncState).values(missingStates).onConflictDoNothing();
+  }
+}
+
 export async function ensureTradingStore() {
   await seedIfNeeded();
+  await ensureTraderSyncStates();
 }
 
 export async function listTraders() {
   await ensureTradingStore();
   const rows = await db.select().from(trader).orderBy(asc(trader.createdAt));
   return rows.map(deserializeTrader);
+}
+
+export async function listTraderSyncStates() {
+  await ensureTradingStore();
+  const rows = await db.select().from(traderSyncState).orderBy(asc(traderSyncState.createdAt));
+  return rows.map(deserializeTraderSyncState);
+}
+
+export async function getTraderSyncStatesByTraderIds(traderIds: string[]) {
+  await ensureTradingStore();
+  if (traderIds.length === 0) {
+    return [];
+  }
+
+  const rows = await db
+    .select()
+    .from(traderSyncState)
+    .where(
+      sql`${traderSyncState.traderId} in (${sql.join(
+        traderIds.map((id) => sql`${id}`),
+        sql`, `,
+      )})`,
+    );
+
+  return rows.map(deserializeTraderSyncState);
+}
+
+export async function getTraderSyncState(traderId: string) {
+  await ensureTradingStore();
+  const row = await db.query.traderSyncState.findFirst({
+    where: eq(traderSyncState.traderId, traderId),
+  });
+
+  return row ? deserializeTraderSyncState(row) : null;
 }
 
 export async function listTradersByUser(userId: string) {
@@ -491,9 +674,161 @@ export async function listMarketCandles(
   return (await query).map(deserializeMarketCandle);
 }
 
+export async function upsertTraderSyncState(
+  traderId: string,
+  patch: Partial<TraderSyncState>,
+  defaults?: Pick<TraderRecord, "strategyStatus">,
+) {
+  await ensureTradingStore();
+  const current = await getTraderSyncState(traderId);
+  const base =
+    current ??
+    createDefaultTraderSyncStateRecord({
+      id: traderId,
+      strategyStatus: defaults?.strategyStatus ?? "watch",
+    });
+  const next: TraderSyncState = {
+    ...base,
+    ...patch,
+    traderId,
+    updatedAt: Date.now(),
+  };
+
+  await db
+    .insert(traderSyncState)
+    .values({
+      ...serializeTraderSyncState(next),
+      createdAt: current ? (toDate(current.createdAt) ?? new Date()) : new Date(next.createdAt),
+      updatedAt: new Date(next.updatedAt),
+    })
+    .onConflictDoUpdate({
+      target: traderSyncState.traderId,
+      set: {
+        priority: next.priority,
+        enabled: next.enabled,
+        fetchIntervalMs: next.fetchIntervalMs,
+        nextFetchAt: toDate(next.nextFetchAt),
+        lastAttemptAt: toDate(next.lastAttemptAt),
+        lastSuccessAt: toDate(next.lastSuccessAt),
+        lastStatus: next.lastStatus,
+        lastError: next.lastError,
+        failCount: next.failCount,
+        lockedUntil: toDate(next.lockedUntil),
+        updatedAt: new Date(next.updatedAt),
+      },
+    });
+
+  return next;
+}
+
+export async function syncTraderSyncProfile(
+  traderRecord: Pick<TraderRecord, "id" | "strategyStatus">,
+  options?: {
+    immediate?: boolean;
+    priority?: TraderSyncPriority;
+    enabled?: boolean;
+  },
+) {
+  await ensureTradingStore();
+  const current = await getTraderSyncState(traderRecord.id);
+  const priority = options?.priority ?? getTraderSyncPriority(traderRecord);
+  const now = Date.now();
+  const fetchIntervalMs = getTraderSyncIntervalMs(priority);
+
+  return upsertTraderSyncState(
+    traderRecord.id,
+    {
+      priority,
+      enabled: options?.enabled ?? current?.enabled ?? true,
+      fetchIntervalMs,
+      nextFetchAt: options?.immediate ? now : (current?.nextFetchAt ?? now),
+      lastStatus: current?.lastStatus ?? "idle",
+    },
+    traderRecord,
+  );
+}
+
+export async function scheduleTraderSyncNow(traderId: string) {
+  await ensureTradingStore();
+  const current = await getTraderSyncState(traderId);
+  if (!current) {
+    return null;
+  }
+
+  return upsertTraderSyncState(traderId, {
+    nextFetchAt: Date.now(),
+    lockedUntil: null,
+    lastError: current.lastStatus === "failed" ? current.lastError : null,
+  });
+}
+
+export async function listDueTraderSyncStates(limit = 8, now = Date.now()) {
+  await ensureTradingStore();
+  const rows = await db
+    .select()
+    .from(traderSyncState)
+    .where(
+      and(
+        eq(traderSyncState.enabled, true),
+        lte(traderSyncState.nextFetchAt, new Date(now)),
+        or(isNull(traderSyncState.lockedUntil), lte(traderSyncState.lockedUntil, new Date(now))),
+      ),
+    )
+    .orderBy(asc(traderSyncState.nextFetchAt), asc(traderSyncState.updatedAt))
+    .limit(limit);
+
+  return rows.map(deserializeTraderSyncState);
+}
+
+export async function beginTraderSyncAttempt(traderId: string, lockMs: number, now = Date.now()) {
+  await ensureTradingStore();
+  const current = await getTraderSyncState(traderId);
+  if (!current) {
+    return null;
+  }
+
+  if (current.lockedUntil && current.lockedUntil > now) {
+    return null;
+  }
+
+  return upsertTraderSyncState(traderId, {
+    lastAttemptAt: now,
+    lastStatus: "running",
+    lastError: null,
+    lockedUntil: now + lockMs,
+  });
+}
+
+export async function completeTraderSyncAttempt(
+  traderId: string,
+  input: {
+    now?: number;
+    status: Extract<TraderSyncStatus, "success" | "failed">;
+    error?: string | null;
+  },
+) {
+  await ensureTradingStore();
+  const current = await getTraderSyncState(traderId);
+  if (!current) {
+    return null;
+  }
+
+  const now = input.now ?? Date.now();
+  const failCount = input.status === "failed" ? current.failCount + 1 : 0;
+  return upsertTraderSyncState(traderId, {
+    lastStatus: input.status,
+    lastError: input.status === "failed" ? (input.error ?? "unknown sync failure") : null,
+    lastSuccessAt: input.status === "success" ? now : current.lastSuccessAt,
+    failCount,
+    nextFetchAt: getNextTraderSyncAt(current.priority, now, failCount),
+    lockedUntil: null,
+  });
+}
+
 export async function createTrader(traderRecord: TraderRecord) {
   await ensureTradingStore();
   await db.insert(trader).values(serializeTrader(traderRecord));
+  await syncTraderSyncProfile(traderRecord, { immediate: true });
 }
 
 export async function updateTraderRecord(traderId: string, patch: Partial<TraderRecord>) {
@@ -529,6 +864,10 @@ export async function updateTraderRecord(traderId: string, patch: Partial<Trader
       updatedAt: new Date(),
     })
     .where(eq(trader.id, traderId));
+
+  await syncTraderSyncProfile(next, {
+    immediate: patch.strategyStatus != null,
+  });
 
   return next;
 }

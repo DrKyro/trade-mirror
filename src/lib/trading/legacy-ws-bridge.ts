@@ -42,16 +42,10 @@ function normalizePlatform(value: unknown): TraderPlatform | null {
     case "bitget":
       return "bitget";
     case "binance":
-      return "binance";
     case "binancefutures":
       return "binanceFutures";
     case "bybit":
       return "bybit";
-    case "huobi":
-      return "huobi";
-    case "traderwagon":
-    case "traderwargon":
-      return "traderWagon";
     default:
       return null;
   }

@@ -10,6 +10,10 @@ import {
 import { BybitRuntimeError } from "#/lib/trading/adapters/bybit-runtime";
 import { fetchTraderLiveSnapshot } from "#/lib/trading/adapters/trader-position-adapters";
 import {
+  BYBIT_RUNTIME_METADATA_KEY,
+  parseBybitRuntimeState,
+} from "#/lib/trading/bybit-runtime-state";
+import {
   applyPositionChangeToTeacher,
   cloneTeacher,
   cloneTrader,
@@ -19,16 +23,27 @@ import {
 import { ensureLegacyWsBridge } from "#/lib/trading/legacy-ws-bridge";
 import { supportsLiveRefresh } from "#/lib/trading/platform-utils";
 import {
+  REFRESH_SCHEDULER_METADATA_KEY,
+  RefreshScheduler,
+  TRADER_SYNC_LOCK_MS,
+  createDefaultRefreshSchedulerState,
+  isRefreshSchedulerPlatform,
+} from "#/lib/trading/refresh-scheduler";
+import {
   appendRuntimeEvent,
+  beginTraderSyncAttempt,
   claimUnownedTeachers,
   claimUnownedTraders,
+  completeTraderSyncAttempt,
   createTeacher,
   createTrader,
   deleteTeacherRecord,
   deleteTraderRecord,
   ensureTradingStore,
+  getTraderSyncStatesByTraderIds,
   getRuntimeStatus,
   linkTraderToUser,
+  listDueTraderSyncStates,
   listRuntimeEvents,
   listTeachers,
   listTeachersByOwner,
@@ -46,7 +61,6 @@ import type {
   MarketSubscriptionPlatformState,
   MarketSubscriptionState,
   PositionChange,
-  RefreshSchedulerPlatform,
   RefreshSchedulerState,
   RuntimeEvent,
   TeacherSettings,
@@ -55,18 +69,8 @@ import type {
   TraderRecord,
 } from "#/lib/trading/types";
 
-const REFRESH_SCHEDULER_METADATA_KEY = "refreshScheduler";
 const MARKET_SUBSCRIPTIONS_METADATA_KEY = "marketSubscriptions";
-const BYBIT_RUNTIME_METADATA_KEY = "bybitRuntime";
 const NOTIFICATION_ROUTE_OVERRIDES_METADATA_KEY = "notificationRouteOverrides";
-const REFRESH_SCHEDULER_SUPPORTED_PLATFORMS = [
-  "okx",
-  "bitget",
-  "binanceFutures",
-  "bybit",
-  "traderWagon",
-] as const;
-const REFRESH_SCHEDULER_POLL_INTERVAL_MS = 15_000;
 const DEFAULT_DRY_RUN_TEACHER_BALANCE = 10_000;
 const LEGACY_TRADER_SPY_WS_PORT = Number(process.env.TRADER_SPY_WS_PORT ?? 8011);
 const LEGACY_MSG_WS_PORT = Number(process.env.LEGACY_MSG_WS_PORT ?? 8001);
@@ -76,20 +80,6 @@ function buildEvent(input: Omit<RuntimeEvent, "id" | "timestamp">): RuntimeEvent
     id: `${input.scope}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
     timestamp: Date.now(),
     ...input,
-  };
-}
-
-function createDefaultRefreshSchedulerState(): RefreshSchedulerState {
-  return {
-    running: false,
-    supportedPlatforms: REFRESH_SCHEDULER_SUPPORTED_PLATFORMS,
-    activePlatforms: [],
-    iterationCount: 0,
-    lastStartedAt: null,
-    lastStoppedAt: null,
-    lastCompletedAt: null,
-    lastError: null,
-    pollIntervalMs: REFRESH_SCHEDULER_POLL_INTERVAL_MS,
   };
 }
 
@@ -104,27 +94,25 @@ function createDefaultMarketSubscriptionState(): MarketSubscriptionState {
   };
 }
 
-function createDefaultBybitRuntimeState(): BybitRuntimeState {
-  return {
-    lastStatus: "idle",
-    lastMode: null,
-    lastTraderId: null,
-    lastDetail: null,
-    lastScreenshotPath: null,
-    lastAttemptAt: null,
-    lastSuccessAt: null,
-  };
-}
-
-function isRefreshSchedulerPlatform(value: string): value is RefreshSchedulerPlatform {
-  return REFRESH_SCHEDULER_SUPPORTED_PLATFORMS.includes(value as RefreshSchedulerPlatform);
-}
-
 class TradingRuntime {
   private readonly previousPositions = new Map<string, TraderRecord["positions"]>();
   private bootPromise: Promise<void> | null = null;
-  private refreshSchedulerPromise: Promise<void> | null = null;
-  private refreshSchedulerRunning = false;
+  private readonly refreshScheduler: RefreshScheduler;
+
+  constructor() {
+    this.refreshScheduler = new RefreshScheduler({
+      getRefreshSchedulerState: () => this.getRefreshSchedulerState(),
+      patchRefreshSchedulerState: (patch) => this.patchRefreshSchedulerState(patch),
+      pushEvent: (event) => this.pushEvent(event),
+      listDueTraderSyncStates: (limit) => listDueTraderSyncStates(limit),
+      beginTraderSyncAttempt: (traderId, lockMs) => beginTraderSyncAttempt(traderId, lockMs),
+      refreshTraderPositions: (traderId, options) => this.refreshTraderPositions(traderId, options),
+      syncTeacherStates: (teachers, traders, options) =>
+        this.syncTeacherStates(teachers, traders, options),
+      listTraders: () => listTraders(),
+      listTeachers: () => listTeachers(),
+    });
+  }
 
   private async getRefreshSchedulerState() {
     const status = await getRuntimeStatus();
@@ -139,7 +127,7 @@ class TradingRuntime {
     return {
       ...createDefaultRefreshSchedulerState(),
       ...candidate,
-      supportedPlatforms: REFRESH_SCHEDULER_SUPPORTED_PLATFORMS,
+      supportedPlatforms: createDefaultRefreshSchedulerState().supportedPlatforms,
       activePlatforms: Array.isArray(candidate.activePlatforms)
         ? candidate.activePlatforms.filter(isRefreshSchedulerPlatform)
         : [],
@@ -217,31 +205,7 @@ class TradingRuntime {
   private async getBybitRuntimeState() {
     const status = await getRuntimeStatus();
     const metadata = status.metadata ?? {};
-    const rawState = metadata[BYBIT_RUNTIME_METADATA_KEY];
-
-    if (!rawState || typeof rawState !== "object") {
-      return createDefaultBybitRuntimeState();
-    }
-
-    const candidate = rawState as Partial<BybitRuntimeState>;
-    return {
-      ...createDefaultBybitRuntimeState(),
-      ...candidate,
-      lastStatus:
-        typeof candidate.lastStatus === "string"
-          ? candidate.lastStatus
-          : createDefaultBybitRuntimeState().lastStatus,
-      lastMode:
-        candidate.lastMode === "api" || candidate.lastMode === "browser-fallback"
-          ? candidate.lastMode
-          : null,
-      lastTraderId: typeof candidate.lastTraderId === "string" ? candidate.lastTraderId : null,
-      lastDetail: typeof candidate.lastDetail === "string" ? candidate.lastDetail : null,
-      lastScreenshotPath:
-        typeof candidate.lastScreenshotPath === "string" ? candidate.lastScreenshotPath : null,
-      lastAttemptAt: typeof candidate.lastAttemptAt === "number" ? candidate.lastAttemptAt : null,
-      lastSuccessAt: typeof candidate.lastSuccessAt === "number" ? candidate.lastSuccessAt : null,
-    } satisfies BybitRuntimeState;
+    return parseBybitRuntimeState(metadata[BYBIT_RUNTIME_METADATA_KEY]);
   }
 
   private async getNotificationRouteOverrides() {
@@ -278,12 +242,7 @@ class TradingRuntime {
     const status = await getRuntimeStatus();
     const currentScheduler = await this.getRefreshSchedulerState();
     const nextScheduler =
-      typeof patch === "function"
-        ? patch(currentScheduler)
-        : {
-            ...currentScheduler,
-            ...patch,
-          };
+      typeof patch === "function" ? patch(currentScheduler) : { ...currentScheduler, ...patch };
 
     await setRuntimeStatus({
       ...status,
@@ -304,12 +263,7 @@ class TradingRuntime {
     const status = await getRuntimeStatus();
     const currentMarketState = await this.getMarketSubscriptionState();
     const nextMarketState =
-      typeof patch === "function"
-        ? patch(currentMarketState)
-        : {
-            ...currentMarketState,
-            ...patch,
-          };
+      typeof patch === "function" ? patch(currentMarketState) : { ...currentMarketState, ...patch };
 
     await setRuntimeStatus({
       ...status,
@@ -328,12 +282,7 @@ class TradingRuntime {
     const status = await getRuntimeStatus();
     const currentBybitState = await this.getBybitRuntimeState();
     const nextBybitState =
-      typeof patch === "function"
-        ? patch(currentBybitState)
-        : {
-            ...currentBybitState,
-            ...patch,
-          };
+      typeof patch === "function" ? patch(currentBybitState) : { ...currentBybitState, ...patch };
 
     await setRuntimeStatus({
       ...status,
@@ -377,6 +326,15 @@ class TradingRuntime {
       traders: traders.map(cloneTrader),
       teachers: teachers.map(cloneTeacher),
     };
+  }
+
+  private async attachSyncStates(traders: TraderRecord[]) {
+    const syncStates = await getTraderSyncStatesByTraderIds(traders.map((trader) => trader.id));
+    const syncStateMap = new Map(syncStates.map((syncState) => [syncState.traderId, syncState]));
+    return traders.map((trader) => ({
+      ...trader,
+      syncState: syncStateMap.get(trader.id) ?? null,
+    }));
   }
 
   private async pushEvent(event: Omit<RuntimeEvent, "id" | "timestamp">) {
@@ -603,8 +561,8 @@ class TradingRuntime {
 
         const refreshSchedulerState = await this.getRefreshSchedulerState();
         if (refreshSchedulerState.running) {
-          this.refreshSchedulerRunning = false;
-          this.refreshSchedulerPromise = null;
+          this.refreshScheduler.setRunning(false);
+          this.refreshScheduler.setLoop(null);
           await this.startRefreshScheduler();
         }
 
@@ -733,13 +691,13 @@ class TradingRuntime {
 
   async getTraders() {
     await this.ensureBooted();
-    return listTraders();
+    return this.attachSyncStates(await listTraders());
   }
 
   async getTradersForUser(userId: string) {
     await this.ensureBooted();
     await claimUnownedTraders(userId);
-    return listTradersByUser(userId);
+    return this.attachSyncStates(await listTradersByUser(userId));
   }
 
   async getTeachers() {
@@ -996,7 +954,12 @@ class TradingRuntime {
     return this.getTraders();
   }
 
-  async refreshTraderPositions(traderId: string) {
+  async refreshTraderPositions(
+    traderId: string,
+    options?: {
+      preserveRunningState?: boolean;
+    },
+  ) {
     await this.ensureBooted();
     const traders = await listTraders();
     const trader = traders.find((item) => item.id === traderId);
@@ -1004,72 +967,98 @@ class TradingRuntime {
       return null;
     }
 
-    if (trader.platform === "bybit") {
-      await this.patchBybitRuntimeState((current) => ({
-        ...current,
-        lastTraderId: trader.id,
-        lastAttemptAt: Date.now(),
-      }));
-    }
-
-    let snapshot;
+    let syncAttemptOwned = Boolean(options?.preserveRunningState);
     try {
-      snapshot = await fetchTraderLiveSnapshot(trader);
-    } catch (error) {
-      if (error instanceof BybitRuntimeError) {
+      const attemptAt = Date.now();
+      if (!options?.preserveRunningState) {
+        const claim = await beginTraderSyncAttempt(trader.id, TRADER_SYNC_LOCK_MS, attemptAt);
+        if (!claim) {
+          throw new Error(`Trader sync already in progress for ${trader.name}.`);
+        }
+        syncAttemptOwned = true;
+      }
+
+      if (trader.platform === "bybit") {
         await this.patchBybitRuntimeState((current) => ({
           ...current,
-          lastStatus: error.report.status,
-          lastMode: error.report.mode,
-          lastTraderId: error.report.traderId,
-          lastDetail: error.report.detail,
-          lastScreenshotPath: error.report.screenshotPath ?? null,
-          lastAttemptAt: Date.now(),
+          lastTraderId: trader.id,
+          lastAttemptAt: attemptAt,
         }));
-        await this.pushEvent({
-          scope: "trader-spy",
-          level: "warn",
-          title: "bybit browser fallback attention required",
-          detail: `${trader.name} (${trader.id}) reported ${error.report.status} via ${error.report.mode}: ${error.report.detail}${
-            error.report.screenshotPath ? ` Screenshot: ${error.report.screenshotPath}` : ""
-          }`,
-          entityType: "trader",
-          entityId: trader.id,
+      }
+
+      let snapshot;
+      try {
+        snapshot = await fetchTraderLiveSnapshot(trader);
+      } catch (error) {
+        if (error instanceof BybitRuntimeError) {
+          await this.patchBybitRuntimeState((current) => ({
+            ...current,
+            lastStatus: error.report.status,
+            lastMode: error.report.mode,
+            lastTraderId: error.report.traderId,
+            lastDetail: error.report.detail,
+            lastScreenshotPath: error.report.screenshotPath ?? null,
+            lastAttemptAt: Date.now(),
+          }));
+          await this.pushEvent({
+            scope: "trader-spy",
+            level: "warn",
+            title: "bybit browser fallback attention required",
+            detail: `${trader.name} (${trader.id}) reported ${error.report.status} via ${error.report.mode}: ${error.report.detail}${
+              error.report.screenshotPath ? ` Screenshot: ${error.report.screenshotPath}` : ""
+            }`,
+            entityType: "trader",
+            entityId: trader.id,
+          });
+        }
+        throw error;
+      }
+
+      if (trader.platform === "bybit") {
+        const usingApiCredentials = Boolean(
+          process.env.BYBIT_API_COOKIE || process.env.BYBIT_API_USERTOKEN,
+        );
+        await this.patchBybitRuntimeState((current) => ({
+          ...current,
+          lastStatus: usingApiCredentials ? "api-success" : "browser-success",
+          lastMode: usingApiCredentials ? "api" : "browser-fallback",
+          lastTraderId: trader.id,
+          lastDetail: usingApiCredentials
+            ? "Bybit trader positions refreshed via API credentials."
+            : "Bybit trader positions refreshed via browser fallback.",
+          lastScreenshotPath: null,
+          lastAttemptAt: Date.now(),
+          lastSuccessAt: Date.now(),
+        }));
+      }
+
+      const refreshed = await this.ingestTraderSnapshot(
+        traderId,
+        snapshot.positions,
+        snapshot.traderPatch,
+      );
+      if (syncAttemptOwned) {
+        await completeTraderSyncAttempt(trader.id, {
+          status: "success",
+        });
+      }
+      await this.pushEvent({
+        scope: "trader-spy",
+        level: "info",
+        title: "live refresh completed",
+        detail: `${trader.name} live positions refreshed from ${trader.platform}.`,
+      });
+      return refreshed;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown trader refresh failure";
+      if (syncAttemptOwned) {
+        await completeTraderSyncAttempt(trader.id, {
+          status: "failed",
+          error: detail,
         });
       }
       throw error;
     }
-
-    if (trader.platform === "bybit") {
-      const usingApiCredentials = Boolean(
-        process.env.BYBIT_API_COOKIE || process.env.BYBIT_API_USERTOKEN,
-      );
-      await this.patchBybitRuntimeState((current) => ({
-        ...current,
-        lastStatus: usingApiCredentials ? "api-success" : "browser-success",
-        lastMode: usingApiCredentials ? "api" : "browser-fallback",
-        lastTraderId: trader.id,
-        lastDetail: usingApiCredentials
-          ? "Bybit trader positions refreshed via API credentials."
-          : "Bybit trader positions refreshed via browser fallback.",
-        lastScreenshotPath: null,
-        lastAttemptAt: Date.now(),
-        lastSuccessAt: Date.now(),
-      }));
-    }
-
-    const refreshed = await this.ingestTraderSnapshot(
-      traderId,
-      snapshot.positions,
-      snapshot.traderPatch,
-    );
-    await this.pushEvent({
-      scope: "trader-spy",
-      level: "info",
-      title: "live refresh completed",
-      detail: `${trader.name} live positions refreshed from ${trader.platform}.`,
-    });
-    return refreshed;
   }
 
   async refreshAllSupportedTraderPositions() {
@@ -1144,138 +1133,12 @@ class TradingRuntime {
 
   async startRefreshScheduler() {
     await this.ensureBooted();
-    if (this.refreshSchedulerRunning) {
-      return this.getRefreshSchedulerState();
-    }
-
-    this.refreshSchedulerRunning = true;
-    await this.patchRefreshSchedulerState((current) => ({
-      ...current,
-      running: true,
-      lastStartedAt: Date.now(),
-      lastError: null,
-    }));
-    await this.pushEvent({
-      scope: "trader-spy",
-      level: "info",
-      title: "refresh scheduler started",
-      detail: `Automatic trader refresh started for ${REFRESH_SCHEDULER_SUPPORTED_PLATFORMS.join(", ")}.`,
-    });
-
-    this.refreshSchedulerPromise = this.runRefreshSchedulerLoop();
-    return this.getRefreshSchedulerState();
+    return this.refreshScheduler.start();
   }
 
   async stopRefreshScheduler() {
     await this.ensureBooted();
-    this.refreshSchedulerRunning = false;
-    await this.patchRefreshSchedulerState((current) => ({
-      ...current,
-      running: false,
-      activePlatforms: [],
-      lastStoppedAt: Date.now(),
-    }));
-    await this.pushEvent({
-      scope: "trader-spy",
-      level: "info",
-      title: "refresh scheduler stopped",
-      detail: "Automatic trader refresh loop was stopped.",
-    });
-    return this.getRefreshSchedulerState();
-  }
-
-  private async runRefreshSchedulerLoop() {
-    while (this.refreshSchedulerRunning) {
-      try {
-        const traders = await listTraders();
-        const refreshableTraders = traders.filter((trader) =>
-          isRefreshSchedulerPlatform(trader.platform),
-        );
-        const teachers = await listTeachers();
-        const activePlatforms = Array.from(
-          new Set(refreshableTraders.map((trader) => trader.platform as RefreshSchedulerPlatform)),
-        );
-
-        await this.patchRefreshSchedulerState((current) => ({
-          ...current,
-          running: true,
-          activePlatforms,
-          lastError: null,
-        }));
-
-        await this.syncTeacherStates(teachers, traders, {
-          refreshLiveAccounts: true,
-          warningContext: "running scheduled teacher pre-sync",
-        });
-
-        for (const platform of REFRESH_SCHEDULER_SUPPORTED_PLATFORMS) {
-          if (!this.refreshSchedulerRunning) {
-            break;
-          }
-
-          const platformTraders = refreshableTraders.filter(
-            (trader) => trader.platform === platform,
-          );
-          for (const trader of platformTraders) {
-            if (!this.refreshSchedulerRunning) {
-              break;
-            }
-
-            try {
-              await this.refreshTraderPositions(trader.id);
-            } catch (error) {
-              const detail =
-                error instanceof Error ? error.message : "unknown trader refresh scheduler error";
-              await this.pushEvent({
-                scope: "trader-spy",
-                level: "warn",
-                title: "refresh scheduler trader failed",
-                detail: `${trader.name} (${trader.platform}) refresh failed: ${detail}`,
-              });
-              await this.patchRefreshSchedulerState((current) => ({
-                ...current,
-                lastError: `${trader.id}: ${detail}`,
-              }));
-            }
-          }
-        }
-
-        const [latestTeachers, latestTraders] = await Promise.all([listTeachers(), listTraders()]);
-        await this.syncTeacherStates(latestTeachers, latestTraders, {
-          refreshLiveAccounts: false,
-          warningContext: "running scheduled teacher post-sync",
-        });
-
-        await this.patchRefreshSchedulerState((current) => ({
-          ...current,
-          running: this.refreshSchedulerRunning,
-          activePlatforms: this.refreshSchedulerRunning ? activePlatforms : [],
-          iterationCount: current.iterationCount + 1,
-          lastCompletedAt: Date.now(),
-        }));
-      } catch (error) {
-        const detail =
-          error instanceof Error ? error.message : "unknown refresh scheduler loop failure";
-        await this.pushEvent({
-          scope: "trader-spy",
-          level: "warn",
-          title: "refresh scheduler failed",
-          detail,
-        });
-        await this.patchRefreshSchedulerState((current) => ({
-          ...current,
-          lastError: detail,
-        }));
-      }
-
-      if (!this.refreshSchedulerRunning) {
-        break;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, REFRESH_SCHEDULER_POLL_INTERVAL_MS));
-    }
-
-    this.refreshSchedulerPromise = null;
+    return this.refreshScheduler.stop();
   }
 
   async addTeacher(input: {
@@ -1753,7 +1616,7 @@ class TradingRuntime {
         positionUpdateTime: input.trader.positionUpdateTime ?? Date.now(),
         positions: [],
         historyPositions: [],
-      });
+      } as TraderRecord);
     }
 
     await this.ingestTraderSnapshot(input.trader.id, mergedPositions);

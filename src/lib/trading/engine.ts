@@ -444,7 +444,7 @@ export async function applyPositionChangeToTeacher(
       openTime: fill.openTime ?? Date.now(),
     };
 
-    if (teacher.platform === "binance") {
+    if (teacher.platform === "binanceFutures") {
       const existing = teacher.followRelations.find(
         (item) =>
           item.followTraderId === relation.followTraderId &&

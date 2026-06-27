@@ -39,7 +39,6 @@ async function main() {
   const runtime = getTradingRuntime();
   const verifyUser = await ensureUser();
   const okxTraderId = `bulk-okx-${crypto.randomUUID().slice(0, 8)}`;
-  const wagonTraderId = `bulk-wagon-${crypto.randomUUID().slice(0, 8)}`;
   const originalFetch = globalThis.fetch;
 
   const okxTrader: TraderRecord = {
@@ -54,22 +53,6 @@ async function main() {
     balance: 0,
     monthlyAveragePositionValue: 0,
     threeMonthMaxDrawdown: -100,
-    positionUpdateTime: null,
-    positions: [],
-  };
-
-  const wagonTrader: TraderRecord = {
-    id: wagonTraderId,
-    name: "Bulk TraderWagon Trader",
-    platform: "traderWagon",
-    link: `https://example.com/${wagonTraderId}`,
-    avatar: "https://dummyimage.com/96x96/111827/ffffff&text=W",
-    strategyStatus: "watch",
-    strategyName: "Bulk Wagon",
-    strategyRiskRate: 0.1,
-    balance: 0,
-    monthlyAveragePositionValue: 0,
-    threeMonthMaxDrawdown: -50,
     positionUpdateTime: null,
     positions: [],
   };
@@ -198,33 +181,6 @@ async function main() {
       );
     }
 
-    if (
-      url.includes("traderwagon.com/v1/friendly/social-trading/lead-portfolio/get-position-info")
-    ) {
-      return new Response(
-        JSON.stringify({
-          code: "000000",
-          data: [
-            {
-              id: "wagon-pos-1",
-              symbol: "ETHUSDT",
-              entryPrice: "3000",
-              markPrice: "3012",
-              positionAmount: "0.3",
-              leverage: "10",
-              unrealizedProfit: "3.6",
-            },
-          ],
-        }),
-        {
-          status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
-        },
-      );
-    }
-
     if (init?.method === "POST" && url.includes("binance.com")) {
       return new Response(
         JSON.stringify({
@@ -247,12 +203,10 @@ async function main() {
 
   try {
     await runtime.addTraderForUser(verifyUser.id, okxTrader);
-    await runtime.addTraderForUser(verifyUser.id, wagonTrader);
 
     const result = await runtime.refreshAllSupportedTraderPositions();
     const traders = await runtime.getTraders();
     const refreshedOkx = traders.find((trader) => trader.id === okxTraderId);
-    const refreshedWagon = traders.find((trader) => trader.id === wagonTraderId);
 
     console.log(
       JSON.stringify(
@@ -261,7 +215,6 @@ async function main() {
           refreshedCount: result.refreshedTraderIds.length,
           failedCount: result.failed.length,
           okxUpdated: refreshedOkx?.positions.length ?? 0,
-          wagonUpdated: refreshedWagon?.positions.length ?? 0,
         },
         null,
         2,
@@ -270,7 +223,6 @@ async function main() {
   } finally {
     globalThis.fetch = originalFetch;
     await runtime.deleteTrader(okxTraderId);
-    await runtime.deleteTrader(wagonTraderId);
     await db.execute(sql`delete from "user" where id = ${verifyUser.id}`);
   }
 }

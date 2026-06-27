@@ -64,6 +64,20 @@
       "when": 1782404931512,
       "tag": "0008_cynical_trauma",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783000000000,
+      "tag": "0009_hushed_sync_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783000001000,
+      "tag": "0010_calm_drawdown_runs",
+      "breakpoints": true
     }
   ]
 }

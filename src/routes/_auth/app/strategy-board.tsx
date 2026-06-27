@@ -825,25 +825,25 @@ function useStrategyBoardText() {
   const isZh = locale === "zh-CN";
 
   return {
-    strategySelector: isZh ? "策略选择器" : "Strategy selector",
+    strategySelector: isZh ? "跟单组合" : "Follow pairs",
     strategySelectorDescription: isZh
-      ? "当前已经配置到跟单执行链路里的交易员与交易员组合。"
-      : "Trader and trader combinations currently configured for follow execution.",
+      ? "这里列出已经接入跟单执行链路的老师账户与交易员组合。"
+      : "Teacher-trader pairs currently configured for follow execution.",
     openRelationsLabel: (count: number) =>
       isZh ? `开仓关系：${count}` : `Open relations: ${count}`,
     trackedFillsLabel: (count: number) => (isZh ? `跟踪成交：${count}` : `Tracked fills: ${count}`),
     unrealizedLabel: (value: string) => (isZh ? `未实现：${value}` : `Unrealized: ${value}`),
     realizedLabel: (value: string) => (isZh ? `已实现：${value}` : `Realized: ${value}`),
     noStrategyRecords: isZh
-      ? "暂时还没有策略记录。请至少先配置一条交易员与 trace trader 的关系。"
-      : "No strategy records available yet. Configure at least one trader trace-trader relationship first.",
+      ? "暂时还没有跟单分析记录。请至少先配置一条老师账户与交易员的跟单关系。"
+      : "No follow analytics records yet. Configure at least one teacher-trader follow relationship first.",
     teacherFollowsTrader: (teacher: string, trader: string, mode: string) =>
       isZh
         ? `交易员 ${teacher} 跟随交易员 ${trader} · 模式 ${mode}`
         : `Trader ${teacher} follows trader ${trader} · mode ${mode}`,
     boardDescription: isZh
-      ? "这个内部看板会优先使用持久化的交易员历史；如果没有历史数据，则回退到运行时交易员跟单历史，从而在不依赖旧 Streamlit iframe 的前提下展示策略分析。"
-      : "This internal board now prefers persisted trader history when available and falls back to runtime trader follow history otherwise, so we can surface trader-centric analytics without the old external Streamlit iframe.",
+      ? "这个内部分析页会优先使用持久化的交易员历史；如果没有历史数据，则回退到运行时跟单历史，用来展示这条跟单关系的实际表现。"
+      : "This internal analytics page prefers persisted trader history and falls back to runtime follow history to show the actual performance of each follow relationship.",
     closedTrades: isZh ? "已平仓交易" : "Closed trades",
     winRate: isZh ? "胜率" : "Win rate",
     realizedProfit: isZh ? "已实现收益" : "Realized profit",
@@ -886,7 +886,7 @@ function useStrategyBoardText() {
     holdingDurationEmpty: isZh
       ? "出现已平仓交易后，这里会显示持仓时长分布。"
       : "Holding durations will appear after closed trades exist.",
-    strategyConfiguration: isZh ? "策略配置" : "Strategy configuration",
+    strategyConfiguration: isZh ? "跟单配置" : "Follow config",
     funds: isZh ? "资金" : "Funds",
     fixedFunds: isZh ? "固定资金" : "Fixed funds",
     traceRatio: isZh ? "跟单比例" : "Trace ratio",
@@ -901,12 +901,12 @@ function useStrategyBoardText() {
     runtimeEntrySummary: (count: number) =>
       isZh ? `${count} 条运行时记录` : `${count} runtime entr${count === 1 ? "y" : "ies"}`,
     waitingForStrategyData: isZh
-      ? "策略看板正在等待策略数据。先添加交易员并绑定到交易员后，这个页面就会有内容。"
-      : "Strategy board is waiting for strategy data. Add traders and bind them to a trader to populate this page.",
+      ? "跟单分析正在等待数据。先添加交易员并绑定老师账户后，这个页面就会有内容。"
+      : "Follow analytics is waiting for data. Add traders and bind a teacher account to populate this page.",
     na: isZh ? "暂无" : "n/a",
     noLiveTraderPositions: isZh
-      ? "这个策略当前没有交易员实时持仓。"
-      : "No live trader positions are currently open for this strategy.",
+      ? "这个跟单组合当前没有交易员实时持仓。"
+      : "No live trader positions are currently open for this follow pair.",
     symbol: isZh ? "交易对" : "Symbol",
     side: isZh ? "方向" : "Side",
     entry: isZh ? "开仓价" : "Entry",

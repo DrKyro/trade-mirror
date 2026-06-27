@@ -269,7 +269,7 @@ export const mockRuntimeStatus: AppRuntimeStatus = {
   metadata: {
     refreshScheduler: {
       running: false,
-      supportedPlatforms: ["okx", "bitget", "binanceFutures", "bybit", "traderWagon"],
+      supportedPlatforms: ["okx", "bitget", "binanceFutures", "bybit"],
       activePlatforms: [],
       iterationCount: 0,
       lastStartedAt: null,

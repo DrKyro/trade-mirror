@@ -36,7 +36,7 @@ async function main() {
     const trader = await prepareTraderRecordForCreation({
       id: "BINANCE-PREP-1",
       name: "Fallback Binance Draft Name",
-      platform: "binance",
+      platform: "binanceFutures",
     });
 
     console.log(

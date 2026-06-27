@@ -11,6 +11,7 @@ import {
   $getTeacherEvents,
   $getTeachers,
   $getTraders,
+  $probeApiHealth,
 } from "#/lib/trading/repository";
 
 export const tradersQueryOptions = () =>
@@ -77,4 +78,10 @@ export const teacherEventsQueryOptions = (teacherId: string) =>
           teacherId,
         },
       }),
+  });
+
+export const apiHealthQueryOptions = () =>
+  queryOptions({
+    queryKey: ["trading", "api-health"],
+    queryFn: ({ signal }) => $probeApiHealth({ signal }),
   });

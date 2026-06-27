@@ -1,160 +1,45 @@
 import "@tanstack/react-start/server-only";
-import {
-  closeBinanceLiveOrder,
-  createBinanceLiveOrder,
-} from "#/lib/trading/execution/binance-execution-adapter";
-import {
-  closeBitgetLiveOrder,
-  createBitgetLiveOrder,
-} from "#/lib/trading/execution/bitget-execution-adapter";
-import {
-  closeHuobiLiveOrder,
-  createHuobiLiveOrder,
-} from "#/lib/trading/execution/huobi-execution-adapter";
-import {
-  closeOkxLiveOrder,
-  createOkxLiveOrder,
-} from "#/lib/trading/execution/okx-execution-adapter";
+import "#/lib/trading/adapters/index";
+import { getAdapter } from "#/lib/trading/adapters/registry";
 import type {
   CloseFill,
+  ExecutionFill,
   ExecutionRequest,
   ExecutionServiceResult,
+  FollowOrderRelation,
+  PositionChange,
   TeacherRecord,
+  TraderRecord,
 } from "#/lib/trading/types";
 
 function now() {
   return Date.now();
 }
 
-function isAmountIncrease(request: ExecutionRequest) {
-  return !request.change.added && !request.change.removed && (request.change.amountChange ?? 0) > 0;
-}
-
-function isAmountDecrease(request: ExecutionRequest) {
-  return !request.change.added && !request.change.removed && (request.change.amountChange ?? 0) < 0;
-}
-
-function getSignalAmount(request: ExecutionRequest) {
-  if (request.change.added || request.change.removed) {
-    return Math.abs(request.change.amount);
-  }
-
-  if (request.change.amountChange !== undefined) {
-    return Math.abs(request.change.amountChange);
-  }
-
-  return Math.abs(request.change.amount);
-}
-
 function deriveTracedAmount(request: ExecutionRequest) {
-  if (request.traceSetting.traceOrderMode === "fixed") {
-    return Number(
-      ((request.traceSetting.fixedFunds / Math.max(request.change.entryPrice, 1)) * 20).toFixed(6),
-    );
+  const setting = request.traceSetting;
+  if (setting.traceOrderMode === "fixed") {
+    return setting.fixedFunds;
   }
-
-  return Number((getSignalAmount(request) * request.traceSetting.tracePerRatio).toFixed(6));
+  return Number(((request.change.amount * setting.tracePerRatio) / 100).toFixed(6));
 }
 
-function closeForAmountClass(request: ExecutionRequest, mode: ExecutionServiceResult["mode"]) {
-  const tracedAmount = deriveTracedAmount(request);
-  const matches = request.existingRelations.filter(
-    (relation) =>
-      relation.followTraderId === request.trader.id &&
-      relation.symbol === request.change.symbol &&
-      relation.positionSide === request.change.positionSide,
-  );
+function isAmountIncrease(change: PositionChange) {
+  return change.amountChange !== undefined && change.amountChange > 0;
+}
 
-  const fills: CloseFill[] = matches.map((relation) => ({
-    orderId: relation.orderId,
-    closedAmount: Number(Math.min(relation.amount, tracedAmount).toFixed(6)),
-    closeTime: now(),
-  }));
-
-  return {
-    mode,
-    platformClass: "amountClass",
-    closeFills: fills,
-    notes: [
-      mode === "live"
-        ? "live execution for amount-class close is not wired yet; fill shape is reserved"
-        : "dry-run amount-class close generated",
-    ],
-  } satisfies ExecutionServiceResult;
+function isAmountDecrease(change: PositionChange) {
+  return change.amountChange !== undefined && change.amountChange < 0;
 }
 
 function getOrderClassMatches(request: ExecutionRequest) {
-  return request.existingRelations
-    .filter(
-      (relation) =>
-        relation.followOrderId === request.change.id &&
-        relation.symbol === request.change.symbol &&
-        relation.positionSide === request.change.positionSide,
-    )
-    .sort((left, right) => (right.openTime ?? 0) - (left.openTime ?? 0));
+  return request.existingRelations.filter(
+    (relation) => relation.followOrderId === request.change.id,
+  );
 }
 
-function closeForOrderClass(request: ExecutionRequest, mode: ExecutionServiceResult["mode"]) {
-  const matching = getOrderClassMatches(request);
-
-  return {
-    mode,
-    platformClass: "orderClass",
-    closeFills: matching.map((relation) => ({
-      orderId: relation.orderId,
-      closedAmount: relation.amount,
-      closeTime: now(),
-    })),
-    notes: [
-      mode === "live"
-        ? "live execution for order-class close is not wired yet; fill shape is reserved"
-        : "dry-run order-class close generated",
-    ],
-  } satisfies ExecutionServiceResult;
-}
-
-function closePartialForOrderClass(
-  request: ExecutionRequest,
-  mode: ExecutionServiceResult["mode"],
-) {
-  const matching = getOrderClassMatches(request);
-  let remaining = deriveTracedAmount(request);
-  const closeFills: CloseFill[] = [];
-
-  for (const relation of matching) {
-    if (!(remaining > 0)) {
-      break;
-    }
-
-    const closedAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
-    if (!(closedAmount > 0)) {
-      continue;
-    }
-
-    closeFills.push({
-      orderId: relation.orderId,
-      closedAmount,
-      closeTime: now(),
-    });
-    remaining = Number(Math.max(remaining - closedAmount, 0).toFixed(6));
-  }
-
-  const notes = [
-    mode === "live"
-      ? "live execution for partial order-class close is not wired yet; fill shape is reserved"
-      : "dry-run partial order-class close generated",
-  ];
-
-  if (remaining > 0) {
-    notes.push(`partial close left ${remaining} amount unmatched`);
-  }
-
-  return {
-    mode,
-    platformClass: "orderClass",
-    closeFills,
-    notes,
-  } satisfies ExecutionServiceResult;
+function getPlatformClass(platform: TeacherRecord["platform"]) {
+  return platform === "binanceFutures" ? "amountClass" : "orderClass";
 }
 
 function createDryRunFill(
@@ -162,10 +47,7 @@ function createDryRunFill(
   platformClass: ExecutionServiceResult["platformClass"],
 ) {
   const tracedAmount = deriveTracedAmount(request);
-
-  if (!(tracedAmount > 0)) {
-    return null;
-  }
+  if (!(tracedAmount > 0)) return null;
 
   return {
     mode: request.teacher.executionMode ?? "dry-run",
@@ -187,54 +69,23 @@ function createDryRunFill(
   } satisfies ExecutionServiceResult;
 }
 
-function getPlatformClass(platform: TeacherRecord["platform"]) {
-  return platform === "binance" ? "amountClass" : "orderClass";
-}
-
 async function createLiveOrder(request: ExecutionRequest, amount: number) {
-  switch (request.teacher.platform) {
-    case "bitget":
-      return createBitgetLiveOrder({
-        credentials: request.teacher.credentials,
-        symbol: request.change.symbol,
-        amount,
-        positionSide: request.change.positionSide,
-        followOrderId: request.change.id,
-      });
-    case "okx":
-      return createOkxLiveOrder({
-        credentials: request.teacher.credentials,
-        symbol: request.change.symbol,
-        amount,
-        positionSide: request.change.positionSide,
-        followOrderId: request.change.id,
-      });
-    case "binance":
-      return createBinanceLiveOrder({
-        credentials: request.teacher.credentials,
-        symbol: request.change.symbol,
-        amount,
-        positionSide: request.change.positionSide,
-        followOrderId: request.change.id,
-      });
-    case "huobi":
-      return createHuobiLiveOrder({
-        credentials: request.teacher.credentials,
-        symbol: request.change.symbol,
-        amount,
-        positionSide: request.change.positionSide,
-        followOrderId: request.change.id,
-      });
-    default:
-      return null;
-  }
+  const adapter = getAdapter(request.teacher.platform);
+  if (!adapter.createLiveOrder) return null;
+  return adapter.createLiveOrder({
+    credentials: request.teacher.credentials,
+    symbol: request.change.symbol,
+    amount,
+    positionSide: request.change.positionSide,
+    followOrderId: request.change.id,
+  });
 }
 
 async function closeLiveOrders(
   request: ExecutionRequest,
   platformClass: "orderClass" | "amountClass",
 ) {
-  if (platformClass === "amountClass" && request.teacher.platform === "binance") {
+  if (platformClass === "amountClass" && request.teacher.platform === "binanceFutures") {
     const tracedAmount = deriveTracedAmount(request);
     const matching = request.existingRelations.filter(
       (relation) =>
@@ -243,9 +94,10 @@ async function closeLiveOrders(
         relation.positionSide === request.change.positionSide,
     );
 
+    const adapter = getAdapter(request.teacher.platform);
     return Promise.all(
       matching.map((relation) =>
-        closeBinanceLiveOrder({
+        adapter.closeLiveOrder!({
           credentials: request.teacher.credentials,
           orderId: relation.orderId,
           symbol: relation.symbol,
@@ -256,49 +108,63 @@ async function closeLiveOrders(
     );
   }
 
-  const matching = request.existingRelations.filter(
-    (relation) => relation.followOrderId === request.change.id,
-  );
+  const matching = getOrderClassMatches(request);
+  const adapter = getAdapter(request.teacher.platform);
+  if (!adapter.closeLiveOrder) {
+    return matching.map(
+      (relation) =>
+        ({
+          orderId: relation.orderId,
+          closedAmount: relation.amount,
+          closeTime: Date.now(),
+        }) satisfies CloseFill,
+    );
+  }
 
   return Promise.all(
-    matching.map((relation) => {
-      switch (request.teacher.platform) {
-        case "bitget":
-          return closeBitgetLiveOrder({
-            credentials: request.teacher.credentials,
-            orderId: relation.orderId,
-            symbol: relation.symbol,
-            amount: relation.amount,
-          });
-        case "okx":
-          return closeOkxLiveOrder({
-            credentials: request.teacher.credentials,
-            orderId: relation.orderId,
-            symbol: relation.symbol,
-            amount: relation.amount,
-            positionSide: relation.positionSide,
-          });
-        case "huobi":
-          return closeHuobiLiveOrder({
-            credentials: request.teacher.credentials,
-            orderId: relation.orderId,
-          });
-        default:
-          return Promise.resolve({
-            orderId: relation.orderId,
-            closedAmount: relation.amount,
-            closeTime: Date.now(),
-          } satisfies CloseFill);
-      }
-    }),
+    matching.map((relation) =>
+      adapter.closeLiveOrder!({
+        credentials: request.teacher.credentials,
+        orderId: relation.orderId,
+        symbol: relation.symbol,
+        amount: relation.amount,
+        positionSide: relation.positionSide,
+      }),
+    ),
   );
+}
+
+function closePartialForOrderClass(
+  request: ExecutionRequest,
+  mode: ExecutionServiceResult["mode"],
+) {
+  const matching = getOrderClassMatches(request);
+  let remaining = deriveTracedAmount(request);
+  const closeFills: CloseFill[] = [];
+
+  for (const relation of matching) {
+    if (!(remaining > 0)) break;
+    const closedAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
+    if (!(closedAmount > 0)) continue;
+    closeFills.push({ orderId: relation.orderId, closedAmount, closeTime: now() });
+    remaining = Number(Math.max(remaining - closedAmount, 0).toFixed(6));
+  }
+
+  const notes = [
+    mode === "live"
+      ? "live execution for partial order-class close is not wired yet; fill shape is reserved"
+      : "dry-run partial order-class close generated",
+  ];
+  if (remaining > 0) notes.push(`partial close left ${remaining} amount unmatched`);
+
+  return { mode, platformClass: "orderClass", closeFills, notes } satisfies ExecutionServiceResult;
 }
 
 async function closeLiveOrdersForAmountDecrease(
   request: ExecutionRequest,
   platformClass: "orderClass" | "amountClass",
 ) {
-  if (platformClass === "amountClass" && request.teacher.platform === "binance") {
+  if (platformClass === "amountClass" && request.teacher.platform === "binanceFutures") {
     const matching = request.existingRelations.filter(
       (relation) =>
         relation.followTraderId === request.trader.id &&
@@ -307,179 +173,77 @@ async function closeLiveOrdersForAmountDecrease(
     );
     let remaining = deriveTracedAmount(request);
     const closeFills: CloseFill[] = [];
+    const adapter = getAdapter(request.teacher.platform);
 
     for (const relation of matching) {
-      if (!(remaining > 0)) {
-        break;
-      }
-
-      const closeAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
-      if (!(closeAmount > 0)) {
-        continue;
-      }
-
-      closeFills.push(
-        await closeBinanceLiveOrder({
-          credentials: request.teacher.credentials,
-          orderId: relation.orderId,
-          symbol: relation.symbol,
-          amount: closeAmount,
-          positionSide: relation.positionSide,
-        }),
-      );
-      remaining = Number(Math.max(remaining - closeAmount, 0).toFixed(6));
+      if (!(remaining > 0)) break;
+      const closedAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
+      if (!(closedAmount > 0)) continue;
+      const fill = await adapter.closeLiveOrder!({
+        credentials: request.teacher.credentials,
+        orderId: relation.orderId,
+        symbol: relation.symbol,
+        amount: closedAmount,
+        positionSide: relation.positionSide,
+      });
+      closeFills.push(fill);
+      remaining = Number(Math.max(remaining - closedAmount, 0).toFixed(6));
     }
 
-    return {
-      closeFills,
-      notes: remaining > 0 ? [`partial amount-class close left ${remaining} amount unmatched`] : [],
-    };
+    const notes: string[] = [];
+    if (remaining > 0) notes.push(`partial close left ${remaining} amount unmatched`);
+    return { mode: "live" as const, platformClass, closeFills, notes };
   }
 
-  const matching = getOrderClassMatches(request);
-  let remaining = deriveTracedAmount(request);
-  const closeFills: CloseFill[] = [];
-  const notes: string[] = [];
-
-  for (const relation of matching) {
-    if (!(remaining > 0)) {
-      break;
-    }
-
-    const closeAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
-    if (!(closeAmount > 0)) {
-      continue;
-    }
-
-    if (request.teacher.platform === "okx") {
-      closeFills.push(
-        await closeOkxLiveOrder({
-          credentials: request.teacher.credentials,
-          orderId: relation.orderId,
-          symbol: relation.symbol,
-          amount: closeAmount,
-          positionSide: relation.positionSide,
-        }),
-      );
-      remaining = Number(Math.max(remaining - closeAmount, 0).toFixed(6));
-      continue;
-    }
-
-    if (
-      (request.teacher.platform === "bitget" || request.teacher.platform === "huobi") &&
-      closeAmount === relation.amount
-    ) {
-      if (request.teacher.platform === "bitget") {
-        closeFills.push(
-          await closeBitgetLiveOrder({
-            credentials: request.teacher.credentials,
-            orderId: relation.orderId,
-            symbol: relation.symbol,
-            amount: relation.amount,
-          }),
-        );
-      } else {
-        closeFills.push(
-          await closeHuobiLiveOrder({
-            credentials: request.teacher.credentials,
-            orderId: relation.orderId,
-            amount: relation.amount,
-          }),
-        );
-      }
-      remaining = Number(Math.max(remaining - closeAmount, 0).toFixed(6));
-      continue;
-    }
-
-    notes.push(
-      `${request.teacher.platform} live partial order-class close is not supported for relation ${relation.orderId}`,
-    );
-    break;
-  }
-
-  if (remaining > 0) {
-    notes.push(`partial order-class close left ${remaining} amount unmatched`);
-  }
-
-  return {
-    closeFills,
-    notes,
-  };
+  return closePartialForOrderClass(request, "live");
 }
 
-export async function executeTeacherChange(
+export async function executePositionChange(
   request: ExecutionRequest,
 ): Promise<ExecutionServiceResult | null> {
   const platformClass = getPlatformClass(request.teacher.platform);
   const mode = request.teacher.executionMode ?? "dry-run";
+  const adapter = getAdapter(request.teacher.platform);
+  const supportsLive = Boolean(adapter.createLiveOrder);
 
-  if (request.change.added || isAmountIncrease(request)) {
-    if (
-      mode === "live" &&
-      (request.teacher.platform === "bitget" ||
-        request.teacher.platform === "okx" ||
-        request.teacher.platform === "binance" ||
-        request.teacher.platform === "huobi")
-    ) {
+  if (request.change.added || isAmountIncrease(request.change)) {
+    if (mode === "live" && supportsLive) {
       const tracedAmount = deriveTracedAmount(request);
       if (!(tracedAmount > 0)) {
+        return { mode, platformClass, notes: ["live create skipped because traced amount <= 0"] };
+      }
+      const fill = await createLiveOrder(request, tracedAmount);
+      if (fill) {
         return {
           mode,
           platformClass,
-          notes: ["live create skipped because traced amount <= 0"],
-        } satisfies ExecutionServiceResult;
+          createdFill: fill,
+          notes: [`${request.teacher.platform} live create order executed`],
+        };
       }
-
-      const fill = await createLiveOrder(request, tracedAmount);
-      if (!fill) {
-        return createDryRunFill(request, platformClass);
-      }
-
-      return {
-        mode,
-        platformClass,
-        createdFill: fill,
-        notes: [`${request.teacher.platform} live create order executed`],
-      } satisfies ExecutionServiceResult;
     }
-
     return createDryRunFill(request, platformClass);
   }
 
-  if (request.change.removed || isAmountDecrease(request)) {
-    if (
-      mode === "live" &&
-      (request.teacher.platform === "bitget" ||
-        request.teacher.platform === "okx" ||
-        request.teacher.platform === "binance" ||
-        request.teacher.platform === "huobi")
-    ) {
-      const closeResult = isAmountDecrease(request)
+  if (request.change.removed || isAmountDecrease(request.change)) {
+    if (mode === "live" && supportsLive) {
+      const closeResult = isAmountDecrease(request.change)
         ? await closeLiveOrdersForAmountDecrease(request, platformClass)
         : { closeFills: await closeLiveOrders(request, platformClass), notes: [] };
-
       return {
         mode,
         platformClass,
         closeFills: closeResult.closeFills,
         notes: [`${request.teacher.platform} live close order executed`, ...closeResult.notes],
-      } satisfies ExecutionServiceResult;
+      };
     }
 
-    if (isAmountDecrease(request)) {
-      return platformClass === "amountClass"
-        ? closeForAmountClass(request, mode)
-        : closePartialForOrderClass(request, mode);
-    }
-
-    return platformClass === "amountClass"
-      ? closeForAmountClass(request, mode)
-      : closeForOrderClass(request, mode);
+    return closePartialForOrderClass(request, mode);
   }
 
-  return {
-    mode,
-    platformClass,
-    notes: ["amount-change execution path not implemented yet"],
-  } satisfies ExecutionServiceResult;
+  return null;
 }
+
+export type { ExecutionRequest, ExecutionServiceResult, ExecutionFill, CloseFill };
+
+export const executeTeacherChange = executePositionChange;

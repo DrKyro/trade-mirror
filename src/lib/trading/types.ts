@@ -1,11 +1,8 @@
-export type TraderPlatform =
-  | "okx"
-  | "bitget"
-  | "binance"
-  | "bybit"
-  | "huobi"
-  | "binanceFutures"
-  | "traderWagon";
+export type TraderPlatform = "okx" | "bitget" | "bybit" | "binanceFutures";
+
+export type TraderBacktestMode = "fixed" | "compound";
+
+export type TraderBacktestWindow = "30d" | "90d" | "all";
 
 export type StrategyStatus = "follow" | "watch" | "disabled";
 
@@ -108,6 +105,69 @@ export interface TraderRecord {
   positionUpdateTime: number | null;
   positions: PositionSnapshot[];
   historyPositions?: TraderHistoryPosition[];
+  syncState?: TraderSyncState | null;
+}
+
+export interface TraderBacktestTrade {
+  id: string;
+  symbol: string;
+  side: PositionSide;
+  openTime: number;
+  closeTime: number;
+  amount: number;
+  entryPrice: number;
+  closePrice: number;
+  leverage: number;
+  sourceProfit: number;
+  sourceProfitRate: number;
+  simulatedProfit: number;
+  cumulativeProfit: number;
+  equityAfter: number;
+  drawdown: number;
+  drawdownRate: number;
+}
+
+export interface TraderBacktestTimelinePoint {
+  time: number;
+  tradeId: string;
+  symbol: string;
+  cumulativeProfit: number;
+  equity: number;
+  drawdown: number;
+  drawdownRate: number;
+}
+
+export interface TraderBacktestSummary {
+  closedTrades: number;
+  winRate: number;
+  realizedProfit: number;
+  totalReturn: number;
+  finalEquity: number;
+  maxDrawdown: number;
+  maxDrawdownRate: number;
+  averageTradeReturn: number;
+  largestGain: number;
+  largestLoss: number;
+  grossProfit: number;
+  grossLoss: number;
+  profitFactorLabel: string;
+}
+
+export interface TraderBacktestRunRecord {
+  id: string;
+  userId: string;
+  platform: TraderPlatform;
+  traderId: string;
+  uniqueName: string;
+  nickName: string;
+  mode: TraderBacktestMode;
+  window: TraderBacktestWindow;
+  initialBalance: number;
+  summary: TraderBacktestSummary;
+  timeline: TraderBacktestTimelinePoint[];
+  trades: TraderBacktestTrade[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface TraceTraderSetting {
@@ -152,12 +212,27 @@ export interface TeacherCredentials {
 
 export type ExecutionMode = "dry-run" | "live";
 
-export type RefreshSchedulerPlatform =
-  | "okx"
-  | "bitget"
-  | "binanceFutures"
-  | "bybit"
-  | "traderWagon";
+export type RefreshSchedulerPlatform = "okx" | "bitget" | "binanceFutures" | "bybit";
+
+export type TraderSyncPriority = "live" | "active" | "watch" | "cold";
+
+export type TraderSyncStatus = "idle" | "running" | "success" | "failed";
+
+export interface TraderSyncState {
+  traderId: string;
+  priority: TraderSyncPriority;
+  enabled: boolean;
+  fetchIntervalMs: number;
+  nextFetchAt: number | null;
+  lastAttemptAt: number | null;
+  lastSuccessAt: number | null;
+  lastStatus: TraderSyncStatus;
+  lastError: string | null;
+  failCount: number;
+  lockedUntil: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
 
 export interface RefreshSchedulerState {
   running: boolean;

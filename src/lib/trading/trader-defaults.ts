@@ -1,3 +1,5 @@
+import "#/lib/trading/adapters/index";
+import { getAdapter } from "#/lib/trading/adapters/registry";
 import type { TraderProfileInference } from "#/lib/trading/trader-profile-inference";
 import type { StrategyStatus, TraderPlatform, TraderRecord } from "#/lib/trading/types";
 
@@ -23,30 +25,8 @@ function buildDefaultAvatar(name: string) {
 }
 
 function buildDefaultTraderLink(platform: TraderPlatform, traderId: string) {
-  switch (platform) {
-    case "okx":
-      return `https://www.okx.com/cn/copy-trading/account/${traderId}`;
-    case "bitget":
-      return `https://www.bitget.com/zh-CN/copytrading/trader/${traderId}/futures`;
-    case "traderWagon":
-      return `https://www.traderwagon.com/en/portfolio/${traderId}`;
-    case "bybit":
-      return `https://www.bybit.com/copyTrade/trade-center/detail?leaderMark=${encodeURIComponent(
-        traderId,
-      )}`;
-    case "binanceFutures":
-      return `https://www.binance.com/en/futures-activity/leaderboard/user?encryptedUid=${encodeURIComponent(
-        traderId,
-      )}`;
-    case "binance":
-      return `https://www.binance.com/zh-CN/copy-trading/lead-details?portfolioId=${encodeURIComponent(
-        traderId,
-      )}&timeRange=30D`;
-    case "huobi":
-      return "https://www.huobi.com/zh-cn/futures/copytrading/trading";
-    default:
-      return `https://example.com/trader/${encodeURIComponent(traderId)}`;
-  }
+  const adapter = getAdapter(platform);
+  return adapter.buildTraderLink(traderId);
 }
 
 export function createTraderRecordFromDraft(
