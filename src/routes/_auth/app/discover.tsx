@@ -627,7 +627,6 @@ function TraderTable({
       <table className="min-w-full text-sm">
         <thead className="border-b bg-muted/40 text-left text-xs tracking-wide text-muted-foreground uppercase">
           <tr>
-            <th className="px-3 py-3">{t("discover.platform")}</th>
             <th className="px-3 py-3">{t("common.name")}</th>
             <th className="px-3 py-3">{t("discover.yieldRatio")}</th>
             <th className="px-3 py-3">{t("discover.pnl")}</th>
@@ -635,6 +634,7 @@ function TraderTable({
             <th className="px-3 py-3">{t("discover.followers")}</th>
             <th className="px-3 py-3">{t("discover.maxDrawdown")}</th>
             <th className="px-3 py-3">{t("discover.winRate")}</th>
+            <th className="px-3 py-3">{t("discover.instNum")}</th>
           </tr>
         </thead>
         <tbody>
@@ -644,17 +644,59 @@ function TraderTable({
               className="cursor-pointer border-b transition last:border-0 hover:bg-muted/30"
               onClick={() => onRowClick(item)}
             >
-              <td className="px-3 py-3">{platformLabel(item.platform)}</td>
               <td className="px-3 py-3">
-                <div className="font-medium">{item.nickName}</div>
-                <div className="text-xs text-muted-foreground">@{item.uniqueName}</div>
+                <div className="flex items-center gap-3">
+                  {item.avatar ? (
+                    <img
+                      src={item.avatar}
+                      alt={item.nickName}
+                      className="size-8 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex size-8 items-center justify-center rounded-full bg-muted text-xs font-medium">
+                      {item.nickName.slice(0, 2)}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{item.nickName}</span>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                        {platformLabel(item.platform)}
+                      </span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">@{item.uniqueName}</div>
+                  </div>
+                </div>
               </td>
-              <td className="px-3 py-3 text-emerald-600">{formatPercent(item.yieldRatio)}</td>
-              <td className="px-3 py-3">{formatUsd(item.pnl)}</td>
+              <td className="px-3 py-3">
+                <span className={item.yieldRatio >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                  {formatPercent(item.yieldRatio)}
+                </span>
+              </td>
+              <td className="px-3 py-3">
+                <span className={item.pnl >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                  {formatUsd(item.pnl)}
+                </span>
+              </td>
               <td className="px-3 py-3">{formatUsd(item.aum)}</td>
               <td className="px-3 py-3">{item.followers}</td>
-              <td className="px-3 py-3">{formatPercent(item.maxDrawdown)}</td>
-              <td className="px-3 py-3">{formatPercent(item.winRate)}</td>
+              <td className="px-3 py-3">
+                <span
+                  className={
+                    item.maxDrawdown !== null && item.maxDrawdown > 0.2 ? "text-rose-600" : ""
+                  }
+                >
+                  {formatPercent(item.maxDrawdown)}
+                </span>
+              </td>
+              <td className="px-3 py-3">
+                <span
+                  className={item.winRate !== null && item.winRate >= 0.5 ? "text-emerald-600" : ""}
+                >
+                  {formatPercent(item.winRate)}
+                </span>
+              </td>
+              <td className="px-3 py-3 text-muted-foreground">{item.instNum ?? "—"}</td>
             </tr>
           ))}
         </tbody>
