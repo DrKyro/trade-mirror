@@ -273,6 +273,9 @@ type BitgetRankEntry = {
     comparedValue?: string;
     showColumnDesc?: string;
   }>;
+  klineProfit?: {
+    rows?: Array<{ amount: string; dataTime: number }>;
+  };
 };
 
 // ── positions (CCXT) ──
@@ -526,22 +529,22 @@ function buildBitgetExtraStats(
 
   return {
     nonPeriodicPart: [
-      createBitgetMetric("totalFollowers", "Total Followers", stats?.totalFollowers, 1, "2"),
-      createBitgetMetric("totalFollowProfit", "Copier Profit (USDT)", stats?.totalFollowProfit, 2),
-      createBitgetMetric("largestProfit", "Largest Profit (USDT)", stats?.largestProfit, 3),
-      createBitgetMetric("largestLoss", "Largest Loss (USDT)", stats?.largestLoss, 4),
-      createBitgetMetric("averageWin", "Average Win (USDT)", detail?.averageWin, 5),
-      createBitgetMetric("averageLoss", "Average Loss (USDT)", detail?.averageLoss, 6),
+      createBitgetMetric("totalFollowers", "总跟随人数", stats?.totalFollowers, 1, "2"),
+      createBitgetMetric("totalFollowProfit", "跟单者收益 (USDT)", stats?.totalFollowProfit, 2),
+      createBitgetMetric("largestProfit", "最大单笔盈利 (USDT)", stats?.largestProfit, 3),
+      createBitgetMetric("largestLoss", "最大单笔亏损 (USDT)", stats?.largestLoss, 4),
+      createBitgetMetric("averageWin", "平均盈利 (USDT)", detail?.averageWin, 5),
+      createBitgetMetric("averageLoss", "平均亏损 (USDT)", detail?.averageLoss, 6),
     ].filter(
       (item): item is TraderDeepAnalysis["extraStats"]["nonPeriodicPart"][number] => item !== null,
     ),
     periodicPart: [
-      createBitgetMetric("totalTrades", "Total Trades", stats?.totalTrades, 1, "2"),
-      createBitgetMetric("profitTrades", "Winning Trades", stats?.profitTrades, 2, "2"),
-      createBitgetMetric("lossTrades", "Losing Trades", stats?.lossTrades, 3, "2"),
-      createBitgetMetric("winningRate", "Win Rate", stats?.winningRate, 4, "1"),
-      createBitgetMetric("profitFactor", "Profit Factor", detail?.profitFactor, 5, "3"),
-      createBitgetMetric("profitRate", "Profit / Loss Ratio", detail?.profitRate, 6, "3"),
+      createBitgetMetric("totalTrades", "总交易次数", stats?.totalTrades, 1, "2"),
+      createBitgetMetric("profitTrades", "盈利次数", stats?.profitTrades, 2, "2"),
+      createBitgetMetric("lossTrades", "亏损次数", stats?.lossTrades, 3, "2"),
+      createBitgetMetric("winningRate", "胜率", stats?.winningRate, 4, "1"),
+      createBitgetMetric("profitFactor", "盈亏比", detail?.profitFactor, 5, "3"),
+      createBitgetMetric("profitRate", "利润/亏损比", detail?.profitRate, 6, "3"),
     ].filter(
       (item): item is TraderDeepAnalysis["extraStats"]["periodicPart"][number] => item !== null,
     ),
@@ -718,6 +721,7 @@ async function fetchBitgetRankList(query: TraderRankQuery): Promise<TraderRankRe
         : null,
     instNum: null,
     link: `https://www.bitget.com/copy-trading/futures/${entry.traderUid}`,
+    yieldCurve: (entry.klineProfit?.rows ?? []).map((r) => Number(r.amount) / 100),
   }));
 
   return { items, total, platform: "bitget" };

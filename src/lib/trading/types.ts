@@ -305,6 +305,23 @@ export interface TradingRuntimeMetadata {
   marketSubscriptions?: MarketSubscriptionState;
   bybitRuntime?: BybitRuntimeState;
   notificationRouteOverrides?: Partial<Record<string, Array<"feishu" | "telegram" | "discord">>>;
+  discoverCrawler?: DiscoverCrawlerRuntimeState;
+}
+
+export interface DiscoverCrawlerRuntimeState {
+  running: boolean;
+  iterationCount: number;
+  lastStartedAt: number | null;
+  lastStoppedAt: number | null;
+  lastCompletedAt: number | null;
+  lastError: string | null;
+  intervalMs: number;
+  lastResultSummary?: {
+    totalFetched: number;
+    uniqueTraders: number;
+    perPlatform: Record<string, number>;
+    errorCount: number;
+  } | null;
 }
 
 export interface TeacherRecord {

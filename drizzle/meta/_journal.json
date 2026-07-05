@@ -78,6 +78,27 @@
       "when": 1783000001000,
       "tag": "0010_calm_drawdown_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1782618974652,
+      "tag": "0011_add_discover_rank_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782618974653,
+      "tag": "0012_discover_rank_cache_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1782618974654,
+      "tag": "0013_discover_rank_cache_bigint",
+      "breakpoints": true
     }
   ]
 }

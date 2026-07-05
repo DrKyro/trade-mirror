@@ -112,11 +112,11 @@ function DiscoverPage() {
   const pageSize = viewMode === "table" ? 20 : 12;
 
   const rankQuery = useQuery({
-    queryKey: ["discover", "rank", selectedPlatformKey, sortBy, timeRange],
+    queryKey: ["discover", "rank", selectedPlatformKey, sortBy],
     queryFn: ({ signal }) =>
       $fetchTraderRankList({
         signal,
-        data: { platforms: selectedPlatforms, sortBy, timeRange, page: 1, pageSize: 40 },
+        data: { platforms: selectedPlatforms, sortBy },
       }),
     enabled: selectedPlatforms.length > 0,
   });
@@ -566,6 +566,77 @@ function platformLabel(platform: TraderPlatform) {
   return PLATFORMS.find((item) => item.value === platform)?.label ?? platform;
 }
 
+function Sparkline({
+  data,
+  width = 120,
+  height = 36,
+  className,
+}: {
+  data: number[];
+  width?: number;
+  height?: number;
+  className?: string;
+}) {
+  if (data.length < 2) {
+    return (
+      <div
+        className={`flex items-center justify-center text-xs text-muted-foreground ${className ?? ""}`}
+        style={{ width, height }}
+      >
+        —
+      </div>
+    );
+  }
+
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const stepX = width / (data.length - 1);
+  const baselineY = height - ((0 - min) / range) * height;
+
+  const points = data.map((value, index) => {
+    const x = index * stepX;
+    const y = height - ((value - min) / range) * height;
+    return { x, y };
+  });
+
+  const linePath = points
+    .map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`))
+    .join(" ");
+
+  const areaPath =
+    `M 0 ${height} ` + points.map((p) => `L ${p.x} ${p.y}`).join(" ") + ` L ${width} ${height} Z`;
+
+  const isPositive = data[data.length - 1] >= data[0];
+  const color = isPositive ? "rgb(5 150 105)" : "rgb(225 29 72)";
+  const fillColor = isPositive ? "rgb(5 150 105 / 0.12)" : "rgb(225 29 72 / 0.12)";
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className={className}
+      preserveAspectRatio="none"
+    >
+      <path d={areaPath} fill={fillColor} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" />
+      {min < 0 && max > 0 ? (
+        <line
+          x1={0}
+          y1={baselineY}
+          x2={width}
+          y2={baselineY}
+          stroke="currentColor"
+          strokeWidth={0.5}
+          strokeDasharray="2 2"
+          className="text-muted-foreground"
+        />
+      ) : null}
+    </svg>
+  );
+}
+
 function TraderCard({ item, onClick }: { item: TraderRankItem; onClick: () => void }) {
   const { t } = useI18n();
 
@@ -596,6 +667,10 @@ function TraderCard({ item, onClick }: { item: TraderRankItem; onClick: () => vo
       </div>
 
       {item.sign ? <p className="line-clamp-2 text-xs text-muted-foreground">{item.sign}</p> : null}
+
+      {item.yieldCurve.length >= 2 ? (
+        <Sparkline data={item.yieldCurve} width={260} height={48} className="w-full" />
+      ) : null}
 
       <div className="grid grid-cols-2 gap-2 text-sm">
         <Metric label={t("discover.yieldRatio")} value={formatPercent(item.yieldRatio)} highlight />
@@ -628,6 +703,7 @@ function TraderTable({
         <thead className="border-b bg-muted/40 text-left text-xs tracking-wide text-muted-foreground uppercase">
           <tr>
             <th className="px-3 py-3">{t("common.name")}</th>
+            <th className="px-3 py-3">{t("discover.yieldCurve")}</th>
             <th className="px-3 py-3">{t("discover.yieldRatio")}</th>
             <th className="px-3 py-3">{t("discover.pnl")}</th>
             <th className="px-3 py-3">{t("discover.aum")}</th>
@@ -667,6 +743,9 @@ function TraderTable({
                     <div className="text-xs text-muted-foreground">@{item.uniqueName}</div>
                   </div>
                 </div>
+              </td>
+              <td className="px-3 py-3">
+                <Sparkline data={item.yieldCurve} width={120} height={36} />
               </td>
               <td className="px-3 py-3">
                 <span className={item.yieldRatio >= 0 ? "text-emerald-600" : "text-rose-600"}>
@@ -828,6 +907,7 @@ function DeepAnalysisSheet({
                       render={
                         <Link
                           to="/app/backtest/$platform/$traderId"
+                          preload={false}
                           params={{
                             platform: trader.platform,
                             traderId: trader.traderId,

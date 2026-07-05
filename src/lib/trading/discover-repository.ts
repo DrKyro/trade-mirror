@@ -6,15 +6,9 @@ import { authMiddleware } from "#/lib/auth/middleware";
 import { db } from "#/lib/db";
 import { traderBacktestRun } from "#/lib/db/schema";
 import { buildTraderBacktest } from "#/lib/trading/discover-backtests";
-import {
-  fetchTraderDeepAnalysis,
-  fetchTraderRankList,
-} from "#/lib/trading/trader-rank-adapters.server";
-import type {
-  RankSortBy,
-  RankTimeRange,
-  TraderRankPlatformError,
-} from "#/lib/trading/trader-rank-types";
+import { queryAllDiscoverCache, runDiscoverCrawler } from "#/lib/trading/discover-crawler";
+import { fetchTraderDeepAnalysis } from "#/lib/trading/trader-rank-adapters.server";
+import type { RankSortBy, TraderRankPlatformError } from "#/lib/trading/trader-rank-types";
 import type { TraderPlatform } from "#/lib/trading/types";
 
 const supportedPlatformsSchema = z.enum(["okx", "bitget", "bybit", "binanceFutures"]);
@@ -50,54 +44,40 @@ function compareRankItems(
 const rankQuerySchema = z.object({
   platforms: z.array(supportedPlatformsSchema).min(1),
   sortBy: z.enum(["yieldRatio", "pnl", "aum", "followers", "maxDrawdown", "winRate"]),
-  timeRange: z.enum(["7", "30", "90"]),
-  page: z.number().int().min(1),
-  pageSize: z.number().int().min(1).max(50),
 });
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  return "Unknown fetch error";
-}
 
 export const $fetchTraderRankList = createServerFn({ method: "GET" })
   .middleware([authMiddleware])
   .validator(rankQuerySchema)
   .handler(async ({ data }) => {
     const platforms = [...new Set(data.platforms)] as TraderPlatform[];
-    const perPlatformPageSize = Math.max(data.pageSize, 24);
-    const results = await Promise.allSettled(
-      platforms.map((platform) =>
-        fetchTraderRankList({
-          platform,
-          sortBy: data.sortBy as RankSortBy,
-          timeRange: data.timeRange as RankTimeRange,
-          page: data.page,
-          pageSize: perPlatformPageSize,
-        }),
-      ),
-    );
 
-    const items = results
-      .flatMap((result) => (result.status === "fulfilled" ? result.value.items : []))
+    let cacheResult = await queryAllDiscoverCache(platforms);
+    if (cacheResult.items.length === 0) {
+      try {
+        await runDiscoverCrawler();
+        cacheResult = await queryAllDiscoverCache(platforms);
+      } catch (error) {
+        console.error("discover crawler bootstrap failed", error);
+      }
+    }
+
+    const seen = new Set<string>();
+    const items = cacheResult.items
+      .filter((item) => {
+        const key = `${item.platform}-${item.traderId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
       .sort((left, right) => compareRankItems(left, right, data.sortBy as RankSortBy));
-
-    const platformErrors = results.flatMap<TraderRankPlatformError>((result, index) =>
-      result.status === "rejected"
-        ? [
-            {
-              platform: platforms[index],
-              message: getErrorMessage(result.reason),
-            },
-          ]
-        : [],
-    );
 
     return {
       items,
       total: items.length,
       platforms,
-      platformErrors,
+      platformErrors: [] as TraderRankPlatformError[],
+      crawledAt: cacheResult.crawledAt,
     };
   });
 

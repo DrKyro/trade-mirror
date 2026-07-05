@@ -35,7 +35,6 @@ import type {
 const SCALE = 1_000;
 const RATIO_SCALE = 10_000;
 const EVENT_LIMIT = 40;
-let traderSyncStateSchemaReady: Promise<void> | null = null;
 
 function toMilli(value: number) {
   return Math.round(value * SCALE);
@@ -340,56 +339,7 @@ async function seedIfNeeded() {
   });
 }
 
-async function ensureTraderSyncStateTable() {
-  if (!traderSyncStateSchemaReady) {
-    traderSyncStateSchemaReady = (async () => {
-      await db.execute(
-        sql.raw(`
-        CREATE TABLE IF NOT EXISTS "trader_sync_state" (
-          "trader_id" text PRIMARY KEY NOT NULL,
-          "priority" text NOT NULL,
-          "enabled" boolean DEFAULT true NOT NULL,
-          "fetch_interval_ms" integer NOT NULL,
-          "next_fetch_at" timestamp,
-          "last_attempt_at" timestamp,
-          "last_success_at" timestamp,
-          "last_status" text NOT NULL,
-          "last_error" text,
-          "fail_count" integer DEFAULT 0 NOT NULL,
-          "locked_until" timestamp,
-          "created_at" timestamp DEFAULT now() NOT NULL,
-          "updated_at" timestamp DEFAULT now() NOT NULL,
-          CONSTRAINT "trader_sync_state_trader_id_trader_id_fk"
-            FOREIGN KEY ("trader_id") REFERENCES "trader"("id") ON DELETE cascade
-        )
-      `),
-      );
-      await db.execute(
-        sql.raw(
-          `CREATE INDEX IF NOT EXISTS "trader_sync_state_priority_idx" ON "trader_sync_state" ("priority")`,
-        ),
-      );
-      await db.execute(
-        sql.raw(
-          `CREATE INDEX IF NOT EXISTS "trader_sync_state_next_fetch_at_idx" ON "trader_sync_state" ("next_fetch_at")`,
-        ),
-      );
-      await db.execute(
-        sql.raw(
-          `CREATE INDEX IF NOT EXISTS "trader_sync_state_locked_until_idx" ON "trader_sync_state" ("locked_until")`,
-        ),
-      );
-    })().catch((error) => {
-      traderSyncStateSchemaReady = null;
-      throw error;
-    });
-  }
-
-  await traderSyncStateSchemaReady;
-}
-
 async function ensureTraderSyncStates() {
-  await ensureTraderSyncStateTable();
   const traders = await db
     .select({
       id: trader.id,
@@ -582,6 +532,55 @@ export async function setRuntimeStatus(status: AppRuntimeStatus) {
         updatedAt: new Date(),
       },
     });
+}
+
+export async function updateRuntimeStatusFlags(
+  patch: Partial<
+    Pick<
+      AppRuntimeStatus,
+      | "mongoConnected"
+      | "traderSpyConnected"
+      | "followEngineRunning"
+      | "wsServerUrl"
+      | "httpPort"
+      | "lastHeartbeat"
+    >
+  >,
+) {
+  await ensureTradingStore();
+  await db
+    .update(runtimeState)
+    .set({
+      ...patch,
+      lastHeartbeat: patch.lastHeartbeat != null ? toDate(patch.lastHeartbeat) : undefined,
+      updatedAt: new Date(),
+    })
+    .where(eq(runtimeState.id, TRADING_RUNTIME_STATE_ID));
+}
+
+export async function patchRuntimeMetadata<T>(
+  key: string,
+  patcher: (current: unknown) => T,
+): Promise<T> {
+  await ensureTradingStore();
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ metadata: runtimeState.metadata })
+      .from(runtimeState)
+      .where(eq(runtimeState.id, TRADING_RUNTIME_STATE_ID))
+      .for("update");
+
+    const metadata = (rows[0]?.metadata ?? {}) as Record<string, unknown>;
+    const next = patcher(metadata[key]);
+    const nextMetadata = { ...metadata, [key]: next };
+
+    await tx
+      .update(runtimeState)
+      .set({ metadata: nextMetadata, updatedAt: new Date() })
+      .where(eq(runtimeState.id, TRADING_RUNTIME_STATE_ID));
+
+    return next;
+  });
 }
 
 export async function listRuntimeEvents() {

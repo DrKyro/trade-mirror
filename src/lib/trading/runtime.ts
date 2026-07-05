@@ -14,6 +14,12 @@ import {
   parseBybitRuntimeState,
 } from "#/lib/trading/bybit-runtime-state";
 import {
+  DISCOVER_CRAWLER_METADATA_KEY,
+  DiscoverCrawlerScheduler,
+  createDefaultDiscoverCrawlerState,
+  type DiscoverCrawlerState,
+} from "#/lib/trading/discover-crawler-scheduler";
+import {
   applyPositionChangeToTeacher,
   cloneTeacher,
   cloneTrader,
@@ -49,14 +55,16 @@ import {
   listTeachersByOwner,
   listTraders,
   listTradersByUser,
-  setRuntimeStatus,
+  patchRuntimeMetadata,
   unlinkTraderFromUser,
+  updateRuntimeStatusFlags,
   updateTeacherRecord,
   updateTraderRecord,
 } from "#/lib/trading/store";
 import { fetchTeacherAccountSnapshot } from "#/lib/trading/teacher-account-adapters";
 import type {
   BybitRuntimeState,
+  DiscoverCrawlerRuntimeState,
   FollowOrderRelation,
   MarketSubscriptionPlatformState,
   MarketSubscriptionState,
@@ -94,10 +102,121 @@ function createDefaultMarketSubscriptionState(): MarketSubscriptionState {
   };
 }
 
+function parseRefreshSchedulerState(rawState: unknown): RefreshSchedulerState {
+  if (!rawState || typeof rawState !== "object") {
+    return createDefaultRefreshSchedulerState();
+  }
+  const candidate = rawState as Partial<RefreshSchedulerState>;
+  return {
+    ...createDefaultRefreshSchedulerState(),
+    ...candidate,
+    supportedPlatforms: createDefaultRefreshSchedulerState().supportedPlatforms,
+    activePlatforms: Array.isArray(candidate.activePlatforms)
+      ? candidate.activePlatforms.filter(isRefreshSchedulerPlatform)
+      : [],
+  } satisfies RefreshSchedulerState;
+}
+
+function parseDiscoverCrawlerState(rawState: unknown): DiscoverCrawlerState {
+  if (!rawState || typeof rawState !== "object") {
+    return createDefaultDiscoverCrawlerState();
+  }
+  const candidate = rawState as Partial<DiscoverCrawlerState>;
+  return {
+    ...createDefaultDiscoverCrawlerState(),
+    ...candidate,
+  } satisfies DiscoverCrawlerState;
+}
+
+function parseMarketSubscriptionState(rawState: unknown): MarketSubscriptionState {
+  if (!rawState || typeof rawState !== "object") {
+    return createDefaultMarketSubscriptionState();
+  }
+  const candidate = rawState as Partial<MarketSubscriptionState>;
+  const platforms = Array.isArray(candidate.platforms)
+    ? candidate.platforms
+        .filter((item) =>
+          Boolean(item && typeof item === "object" && typeof item.platform === "string"),
+        )
+        .map((item) => ({
+          platform: item.platform as TeacherRecord["platform"],
+          symbols: Array.isArray(item.symbols)
+            ? item.symbols.filter((symbol): symbol is string => typeof symbol === "string")
+            : [],
+          symbolCount:
+            typeof item.symbolCount === "number"
+              ? item.symbolCount
+              : Array.isArray(item.symbols)
+                ? item.symbols.length
+                : 0,
+          teacherIds: Array.isArray(item.teacherIds)
+            ? item.teacherIds.filter(
+                (teacherId): teacherId is string => typeof teacherId === "string",
+              )
+            : [],
+          teacherCount:
+            typeof item.teacherCount === "number"
+              ? item.teacherCount
+              : Array.isArray(item.teacherIds)
+                ? item.teacherIds.length
+                : 0,
+          relationCount: typeof item.relationCount === "number" ? item.relationCount : 0,
+          lastMarkUpdateAt:
+            typeof item.lastMarkUpdateAt === "number" ? item.lastMarkUpdateAt : null,
+          lastTraderSnapshotAt:
+            typeof item.lastTraderSnapshotAt === "number" ? item.lastTraderSnapshotAt : null,
+          lastActivityAt: typeof item.lastActivityAt === "number" ? item.lastActivityAt : null,
+        }))
+    : [];
+  return {
+    ...createDefaultMarketSubscriptionState(),
+    ...candidate,
+    activePlatforms: Array.isArray(candidate.activePlatforms)
+      ? candidate.activePlatforms.filter(
+          (platform): platform is TeacherRecord["platform"] => typeof platform === "string",
+        )
+      : platforms.map((item) => item.platform),
+    platforms,
+    totalSymbols:
+      typeof candidate.totalSymbols === "number"
+        ? candidate.totalSymbols
+        : platforms.reduce((sum, item) => sum + item.symbolCount, 0),
+    totalRelations:
+      typeof candidate.totalRelations === "number"
+        ? candidate.totalRelations
+        : platforms.reduce((sum, item) => sum + item.relationCount, 0),
+    lastReconciledAt:
+      typeof candidate.lastReconciledAt === "number" ? candidate.lastReconciledAt : null,
+  } satisfies MarketSubscriptionState;
+}
+
+function parseNotificationRouteOverrides(
+  rawState: unknown,
+): Partial<Record<string, Array<"feishu" | "telegram" | "discord">>> | null {
+  if (!rawState || typeof rawState !== "object") {
+    return null;
+  }
+  const result: Partial<Record<string, Array<"feishu" | "telegram" | "discord">>> = {};
+  for (const routeKey of getNotificationRouteKeys()) {
+    const candidate = (rawState as Record<string, unknown>)[routeKey];
+    if (Array.isArray(candidate)) {
+      const providers = candidate.filter(
+        (item): item is "feishu" | "telegram" | "discord" =>
+          item === "feishu" || item === "telegram" || item === "discord",
+      );
+      if (providers.length > 0) {
+        result[routeKey] = providers;
+      }
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 class TradingRuntime {
   private readonly previousPositions = new Map<string, TraderRecord["positions"]>();
   private bootPromise: Promise<void> | null = null;
   private readonly refreshScheduler: RefreshScheduler;
+  private readonly discoverCrawlerScheduler: DiscoverCrawlerScheduler;
 
   constructor() {
     this.refreshScheduler = new RefreshScheduler({
@@ -112,126 +231,50 @@ class TradingRuntime {
       listTraders: () => listTraders(),
       listTeachers: () => listTeachers(),
     });
+    this.discoverCrawlerScheduler = new DiscoverCrawlerScheduler({
+      getState: () => this.getDiscoverCrawlerState(),
+      patchState: (patch) => this.patchDiscoverCrawlerState(patch),
+      pushEvent: (event) => this.pushEvent(event),
+    });
+  }
+
+  private async getDiscoverCrawlerState(): Promise<DiscoverCrawlerState> {
+    const status = await getRuntimeStatus();
+    const raw = (status.metadata ?? {})[DISCOVER_CRAWLER_METADATA_KEY];
+    return parseDiscoverCrawlerState(raw);
+  }
+
+  private async patchDiscoverCrawlerState(
+    patch:
+      | Partial<DiscoverCrawlerState>
+      | ((current: DiscoverCrawlerState) => DiscoverCrawlerState),
+  ) {
+    return patchRuntimeMetadata(DISCOVER_CRAWLER_METADATA_KEY, (raw) => {
+      const current = parseDiscoverCrawlerState(raw);
+      return typeof patch === "function" ? patch(current) : { ...current, ...patch };
+    });
   }
 
   private async getRefreshSchedulerState() {
     const status = await getRuntimeStatus();
-    const metadata = status.metadata ?? {};
-    const rawState = metadata[REFRESH_SCHEDULER_METADATA_KEY];
-
-    if (!rawState || typeof rawState !== "object") {
-      return createDefaultRefreshSchedulerState();
-    }
-
-    const candidate = rawState as Partial<RefreshSchedulerState>;
-    return {
-      ...createDefaultRefreshSchedulerState(),
-      ...candidate,
-      supportedPlatforms: createDefaultRefreshSchedulerState().supportedPlatforms,
-      activePlatforms: Array.isArray(candidate.activePlatforms)
-        ? candidate.activePlatforms.filter(isRefreshSchedulerPlatform)
-        : [],
-    } satisfies RefreshSchedulerState;
+    return parseRefreshSchedulerState((status.metadata ?? {})[REFRESH_SCHEDULER_METADATA_KEY]);
   }
 
   private async getMarketSubscriptionState() {
     const status = await getRuntimeStatus();
-    const metadata = status.metadata ?? {};
-    const rawState = metadata[MARKET_SUBSCRIPTIONS_METADATA_KEY];
-
-    if (!rawState || typeof rawState !== "object") {
-      return createDefaultMarketSubscriptionState();
-    }
-
-    const candidate = rawState as Partial<MarketSubscriptionState>;
-    const platforms = Array.isArray(candidate.platforms)
-      ? candidate.platforms
-          .filter((item) =>
-            Boolean(item && typeof item === "object" && typeof item.platform === "string"),
-          )
-          .map((item) => ({
-            platform: item.platform as TeacherRecord["platform"],
-            symbols: Array.isArray(item.symbols)
-              ? item.symbols.filter((symbol): symbol is string => typeof symbol === "string")
-              : [],
-            symbolCount:
-              typeof item.symbolCount === "number"
-                ? item.symbolCount
-                : Array.isArray(item.symbols)
-                  ? item.symbols.length
-                  : 0,
-            teacherIds: Array.isArray(item.teacherIds)
-              ? item.teacherIds.filter(
-                  (teacherId): teacherId is string => typeof teacherId === "string",
-                )
-              : [],
-            teacherCount:
-              typeof item.teacherCount === "number"
-                ? item.teacherCount
-                : Array.isArray(item.teacherIds)
-                  ? item.teacherIds.length
-                  : 0,
-            relationCount: typeof item.relationCount === "number" ? item.relationCount : 0,
-            lastMarkUpdateAt:
-              typeof item.lastMarkUpdateAt === "number" ? item.lastMarkUpdateAt : null,
-            lastTraderSnapshotAt:
-              typeof item.lastTraderSnapshotAt === "number" ? item.lastTraderSnapshotAt : null,
-            lastActivityAt: typeof item.lastActivityAt === "number" ? item.lastActivityAt : null,
-          }))
-      : [];
-
-    return {
-      ...createDefaultMarketSubscriptionState(),
-      ...candidate,
-      activePlatforms: Array.isArray(candidate.activePlatforms)
-        ? candidate.activePlatforms.filter(
-            (platform): platform is TeacherRecord["platform"] => typeof platform === "string",
-          )
-        : platforms.map((item) => item.platform),
-      platforms,
-      totalSymbols:
-        typeof candidate.totalSymbols === "number"
-          ? candidate.totalSymbols
-          : platforms.reduce((sum, item) => sum + item.symbolCount, 0),
-      totalRelations:
-        typeof candidate.totalRelations === "number"
-          ? candidate.totalRelations
-          : platforms.reduce((sum, item) => sum + item.relationCount, 0),
-      lastReconciledAt:
-        typeof candidate.lastReconciledAt === "number" ? candidate.lastReconciledAt : null,
-    } satisfies MarketSubscriptionState;
+    return parseMarketSubscriptionState((status.metadata ?? {})[MARKET_SUBSCRIPTIONS_METADATA_KEY]);
   }
 
   private async getBybitRuntimeState() {
     const status = await getRuntimeStatus();
-    const metadata = status.metadata ?? {};
-    return parseBybitRuntimeState(metadata[BYBIT_RUNTIME_METADATA_KEY]);
+    return parseBybitRuntimeState((status.metadata ?? {})[BYBIT_RUNTIME_METADATA_KEY]);
   }
 
   private async getNotificationRouteOverrides() {
     const status = await getRuntimeStatus();
-    const metadata = status.metadata ?? {};
-    const rawState = metadata[NOTIFICATION_ROUTE_OVERRIDES_METADATA_KEY];
-
-    if (!rawState || typeof rawState !== "object") {
-      return null;
-    }
-
-    const result: Partial<Record<string, Array<"feishu" | "telegram" | "discord">>> = {};
-    for (const routeKey of getNotificationRouteKeys()) {
-      const candidate = (rawState as Record<string, unknown>)[routeKey];
-      if (Array.isArray(candidate)) {
-        const providers = candidate.filter(
-          (item): item is "feishu" | "telegram" | "discord" =>
-            item === "feishu" || item === "telegram" || item === "discord",
-        );
-        if (providers.length > 0) {
-          result[routeKey] = providers;
-        }
-      }
-    }
-
-    return Object.keys(result).length > 0 ? result : null;
+    return parseNotificationRouteOverrides(
+      (status.metadata ?? {})[NOTIFICATION_ROUTE_OVERRIDES_METADATA_KEY],
+    );
   }
 
   private async patchRefreshSchedulerState(
@@ -239,20 +282,10 @@ class TradingRuntime {
       | Partial<RefreshSchedulerState>
       | ((current: RefreshSchedulerState) => RefreshSchedulerState),
   ) {
-    const status = await getRuntimeStatus();
-    const currentScheduler = await this.getRefreshSchedulerState();
-    const nextScheduler =
-      typeof patch === "function" ? patch(currentScheduler) : { ...currentScheduler, ...patch };
-
-    await setRuntimeStatus({
-      ...status,
-      metadata: {
-        ...(status.metadata ?? {}),
-        [REFRESH_SCHEDULER_METADATA_KEY]: nextScheduler,
-      },
+    return patchRuntimeMetadata(REFRESH_SCHEDULER_METADATA_KEY, (raw) => {
+      const current = parseRefreshSchedulerState(raw);
+      return typeof patch === "function" ? patch(current) : { ...current, ...patch };
     });
-
-    return nextScheduler;
   }
 
   private async patchMarketSubscriptionState(
@@ -260,54 +293,26 @@ class TradingRuntime {
       | Partial<MarketSubscriptionState>
       | ((current: MarketSubscriptionState) => MarketSubscriptionState),
   ) {
-    const status = await getRuntimeStatus();
-    const currentMarketState = await this.getMarketSubscriptionState();
-    const nextMarketState =
-      typeof patch === "function" ? patch(currentMarketState) : { ...currentMarketState, ...patch };
-
-    await setRuntimeStatus({
-      ...status,
-      metadata: {
-        ...(status.metadata ?? {}),
-        [MARKET_SUBSCRIPTIONS_METADATA_KEY]: nextMarketState,
-      },
+    return patchRuntimeMetadata(MARKET_SUBSCRIPTIONS_METADATA_KEY, (raw) => {
+      const current = parseMarketSubscriptionState(raw);
+      return typeof patch === "function" ? patch(current) : { ...current, ...patch };
     });
-
-    return nextMarketState;
   }
 
   private async patchBybitRuntimeState(
     patch: Partial<BybitRuntimeState> | ((current: BybitRuntimeState) => BybitRuntimeState),
   ) {
-    const status = await getRuntimeStatus();
-    const currentBybitState = await this.getBybitRuntimeState();
-    const nextBybitState =
-      typeof patch === "function" ? patch(currentBybitState) : { ...currentBybitState, ...patch };
-
-    await setRuntimeStatus({
-      ...status,
-      metadata: {
-        ...(status.metadata ?? {}),
-        [BYBIT_RUNTIME_METADATA_KEY]: nextBybitState,
-      },
+    return patchRuntimeMetadata(BYBIT_RUNTIME_METADATA_KEY, (raw) => {
+      const current = parseBybitRuntimeState(raw);
+      return typeof patch === "function" ? patch(current) : { ...current, ...patch };
     });
-
-    return nextBybitState;
   }
 
   private async patchNotificationRouteOverrides(
     nextOverrides: Partial<Record<string, Array<"feishu" | "telegram" | "discord">>> | null,
   ) {
-    const status = await getRuntimeStatus();
-    await setRuntimeStatus({
-      ...status,
-      metadata: {
-        ...(status.metadata ?? {}),
-        [NOTIFICATION_ROUTE_OVERRIDES_METADATA_KEY]: nextOverrides ?? undefined,
-      },
-    });
-
-    return nextOverrides;
+    const stored = nextOverrides ?? undefined;
+    return patchRuntimeMetadata(NOTIFICATION_ROUTE_OVERRIDES_METADATA_KEY, () => stored);
   }
 
   private async withTradersAndTeachers() {
@@ -491,8 +496,7 @@ class TradingRuntime {
 
         const status = await getRuntimeStatus();
         if (!status.followEngineRunning || !status.mongoConnected) {
-          await setRuntimeStatus({
-            ...status,
+          await updateRuntimeStatusFlags({
             mongoConnected: true,
             followEngineRunning: true,
             wsServerUrl: `ws://127.0.0.1:${LEGACY_TRADER_SPY_WS_PORT}`,
@@ -564,6 +568,13 @@ class TradingRuntime {
           this.refreshScheduler.setRunning(false);
           this.refreshScheduler.setLoop(null);
           await this.startRefreshScheduler();
+        }
+
+        const discoverCrawlerState = await this.getDiscoverCrawlerState();
+        if (discoverCrawlerState.running) {
+          this.discoverCrawlerScheduler.setRunning(false);
+          this.discoverCrawlerScheduler.setLoop(null);
+          await this.startDiscoverCrawler();
         }
 
         await this.reconcileMarketSubscriptions(await listTeachers(), await listTraders());
@@ -784,8 +795,7 @@ class TradingRuntime {
     );
 
     await updateTraderRecord(trader.id, trader);
-    await setRuntimeStatus({
-      ...(await getRuntimeStatus()),
+    await updateRuntimeStatusFlags({
       mongoConnected: true,
       traderSpyConnected: true,
       followEngineRunning: true,
@@ -1139,6 +1149,46 @@ class TradingRuntime {
   async stopRefreshScheduler() {
     await this.ensureBooted();
     return this.refreshScheduler.stop();
+  }
+
+  async getDiscoverCrawlerStatus(): Promise<DiscoverCrawlerRuntimeState> {
+    await this.ensureBooted();
+    const state = await this.getDiscoverCrawlerState();
+    const { getDiscoverCrawlerStatus: getCacheStatus } =
+      await import("#/lib/trading/discover-crawler");
+    const cacheStatus = await getCacheStatus();
+    return {
+      running: state.running,
+      iterationCount: state.iterationCount,
+      lastStartedAt: state.lastStartedAt,
+      lastStoppedAt: state.lastStoppedAt,
+      lastCompletedAt: state.lastCompletedAt,
+      lastError: state.lastError,
+      intervalMs: state.intervalMs,
+      lastResultSummary: state.lastResult
+        ? {
+            totalFetched: state.lastResult.totalFetched,
+            uniqueTraders: state.lastResult.uniqueTraders,
+            perPlatform: state.lastResult.perPlatform,
+            errorCount: state.lastResult.errors.length,
+          }
+        : null,
+    };
+  }
+
+  async startDiscoverCrawler() {
+    await this.ensureBooted();
+    return this.discoverCrawlerScheduler.start();
+  }
+
+  async stopDiscoverCrawler() {
+    await this.ensureBooted();
+    return this.discoverCrawlerScheduler.stop();
+  }
+
+  async runDiscoverCrawlerOnce() {
+    await this.ensureBooted();
+    return this.discoverCrawlerScheduler.runOnce();
   }
 
   async addTeacher(input: {

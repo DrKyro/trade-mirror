@@ -316,6 +316,7 @@ type OkxRankEntry = {
   maxDrawdown?: string;
   winRatio?: string;
   totalLeadInstNum?: string;
+  rates?: Array<{ ratio: string; statTime: string }>;
 };
 
 // ── fetch helpers ──
@@ -632,8 +633,10 @@ async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResul
   const rankType = OKX_RANK_TYPE_MAP[query.sortBy] ?? "profit";
   const targetCount = query.pageSize;
   const allEntries: OkxRankEntry[] = [];
+  const seen = new Set<string>();
   let total = 0;
   let pages = 0;
+  let prevKey = "";
 
   for (let pageNo = query.page; allEntries.length < targetCount; pageNo++) {
     const params = new URLSearchParams({
@@ -656,7 +659,20 @@ async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResul
     }
 
     if (ranks.length === 0) break;
-    allEntries.push(...ranks);
+
+    const pageKey = ranks
+      .map((r) => r.uniqueName)
+      .sort()
+      .join(",");
+    if (pageKey === prevKey) break;
+    prevKey = pageKey;
+
+    for (const entry of ranks) {
+      if (!seen.has(entry.uniqueName)) {
+        seen.add(entry.uniqueName);
+        allEntries.push(entry);
+      }
+    }
 
     if (pageNo >= pages) break;
   }
@@ -678,6 +694,7 @@ async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResul
     winRate: entry.winRatio ? Number(entry.winRatio) : null,
     instNum: entry.totalLeadInstNum ? Number(entry.totalLeadInstNum) : null,
     link: `https://www.okx.com/copy-trading/account/${entry.uniqueName}`,
+    yieldCurve: (entry.rates ?? []).map((r) => Number(r.ratio) / 100),
   }));
 
   return { items, total, platform: "okx" };

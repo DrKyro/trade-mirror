@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -11,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { user } from "#/lib/db/schema/auth.schema";
+import type { TraderRankItem } from "#/lib/trading/trader-rank-types";
 import type {
   AppRuntimeStatus,
   ExecutionMode,
@@ -228,6 +230,38 @@ export const marketCandle = pgTable(
   ],
 );
 
+export const discoverRankCache = pgTable(
+  "discover_rank_cache",
+  {
+    platform: text("platform").notNull(),
+    traderId: text("trader_id").notNull(),
+    uniqueName: text("unique_name").notNull(),
+    nickName: text("nick_name").notNull(),
+    avatar: text("avatar").notNull().default(""),
+    sign: text("sign").notNull().default(""),
+    link: text("link").notNull(),
+    yieldRatio: bigint("yield_ratio_milli", { mode: "number" }).notNull().default(0),
+    pnl: bigint("pnl_milli", { mode: "number" }).notNull().default(0),
+    aum: bigint("aum_milli", { mode: "number" }).notNull().default(0),
+    followers: integer("followers").notNull().default(0),
+    maxDrawdown: bigint("max_drawdown_milli", { mode: "number" }),
+    winRate: bigint("win_rate_milli", { mode: "number" }),
+    instNum: integer("inst_num"),
+    yieldCurve: jsonb("yield_curve").$type<number[]>().notNull().default([]),
+    rankData: jsonb("rank_data").$type<TraderRankItem>().notNull(),
+    crawledAt: timestamp("crawled_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.platform, table.traderId] }),
+    index("discover_rank_cache_platform_idx").on(table.platform),
+    index("discover_rank_cache_crawled_at_idx").on(table.crawledAt),
+  ],
+);
+
 export const teacherRelations = relations(teacher, ({ one }) => ({
   owner: one(user, {
     fields: [teacher.ownerUserId],
@@ -285,6 +319,7 @@ export type TraderSyncStateRow = typeof traderSyncState.$inferSelect;
 export type RuntimeStateRow = typeof runtimeState.$inferSelect;
 export type RuntimeEventRow = typeof runtimeEvent.$inferSelect;
 export type MarketCandleRow = typeof marketCandle.$inferSelect;
+export type DiscoverRankCacheRow = typeof discoverRankCache.$inferSelect;
 
 export type RuntimeStatePayload = Omit<AppRuntimeStatus, "lastHeartbeat"> & {
   lastHeartbeat: Date | null;

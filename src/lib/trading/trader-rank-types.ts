@@ -19,6 +19,7 @@ export interface TraderRankItem {
   winRate: number | null;
   instNum: number | null;
   link: string;
+  yieldCurve: number[];
 }
 
 export interface TraderRankResult {

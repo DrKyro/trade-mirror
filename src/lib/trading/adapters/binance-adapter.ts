@@ -256,6 +256,7 @@ type BinanceRankEntry = {
   maxCopyCount?: number;
   sharpRatio?: number;
   portfolioType?: string;
+  chartItems?: Array<{ value: number; dataType: string; dateTime: number }>;
 };
 
 // ── positions ──
@@ -585,26 +586,20 @@ async function fetchBinanceDeepAnalysis(
     yieldCurve,
     extraStats: {
       nonPeriodicPart: [
-        createBinanceMetric("favoriteCount", "Favorites", detail?.favoriteCount, 1, "2"),
+        createBinanceMetric("favoriteCount", "收藏数", detail?.favoriteCount, 1, "2"),
         createBinanceMetric(
           "copyCount",
-          "Copy Count",
+          "跟单人数",
           detail?.currentCopyCount !== undefined && detail?.maxCopyCount !== undefined
             ? `${detail.currentCopyCount}/${detail.maxCopyCount}`
             : detail?.currentCopyCount,
           2,
           "4",
         ),
-        createBinanceMetric(
-          "profitSharingRate",
-          "Profit Share Ratio",
-          detail?.profitSharingRate,
-          3,
-          "1",
-        ),
+        createBinanceMetric("profitSharingRate", "利润分成比例", detail?.profitSharingRate, 3, "1"),
         createBinanceMetric(
           "sharpRatio",
-          "Sharpe Ratio",
+          "夏普比率",
           detail?.sharpRatio ?? performance?.sharpRatio,
           4,
           "3",
@@ -614,9 +609,9 @@ async function fetchBinanceDeepAnalysis(
           item !== null,
       ),
       periodicPart: [
-        createBinanceMetric("winOrders", "Winning Orders", performance?.winOrders, 1, "2"),
-        createBinanceMetric("totalOrder", "Total Orders", performance?.totalOrder, 2, "2"),
-        createBinanceMetric("currentAum", "Current AUM (USDT)", detail?.aumAmount, 3),
+        createBinanceMetric("winOrders", "盈利订单", performance?.winOrders, 1, "2"),
+        createBinanceMetric("totalOrder", "总订单数", performance?.totalOrder, 2, "2"),
+        createBinanceMetric("currentAum", "当前管理资产 (USDT)", detail?.aumAmount, 3),
       ].filter(
         (item): item is TraderDeepAnalysis["extraStats"]["periodicPart"][number] => item !== null,
       ),
@@ -688,6 +683,7 @@ async function fetchBinanceFuturesRankList(query: TraderRankQuery): Promise<Trad
     winRate: entry.winRate !== undefined ? entry.winRate / 100 : null,
     instNum: null,
     link: `https://www.binance.com/zh-CN/copy-trading/lead-details/${entry.leadPortfolioId}`,
+    yieldCurve: (entry.chartItems ?? []).map((p) => p.value / 100),
   }));
 
   return { items, total, platform: "binanceFutures" };

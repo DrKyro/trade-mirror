@@ -359,6 +359,7 @@ async function fetchBybitRankList(query: TraderRankQuery): Promise<TraderRankRes
     winRate: entry.winRate !== undefined ? entry.winRate / 100 : null,
     instNum: null,
     link: `https://www.bybit.com/copyTrade/detail/${entry.leaderId}`,
+    yieldCurve: [],
   }));
 
   return { items, total, platform: "bybit" };
