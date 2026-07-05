@@ -1,35 +1,44 @@
 import "@tanstack/react-start/server-only";
-import { inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import { db } from "#/lib/db";
 import { discoverRankCache } from "#/lib/db/schema/trading.schema";
+import {
+  runDiscoverDeepCrawler,
+  type DiscoverDeepCrawlResult,
+} from "#/lib/trading/discover-deep-cache";
+import {
+  DISCOVER_CRAWLER_PLATFORMS,
+  DISCOVER_LEADERBOARD_SORTS,
+  DISCOVER_RANK_TIME_RANGES,
+} from "#/lib/trading/discover-rank-config";
 import { fetchTraderRankList } from "#/lib/trading/trader-rank-adapters.server";
-import type { RankSortBy, TraderRankItem } from "#/lib/trading/trader-rank-types";
+import type { RankSortBy, RankTimeRange, TraderRankItem } from "#/lib/trading/trader-rank-types";
 import type { TraderPlatform } from "#/lib/trading/types";
 
 const SCALE = 1_000;
 
-export const DISCOVER_CRAWLER_PLATFORMS: TraderPlatform[] = ["okx", "bitget", "binanceFutures"];
+export { DISCOVER_CRAWLER_PLATFORMS } from "#/lib/trading/discover-rank-config";
 
-export const DISCOVER_CRAWLER_SORT_DIMENSIONS: RankSortBy[] = [
-  "yieldRatio",
-  "pnl",
-  "aum",
-  "followers",
-  "maxDrawdown",
-  "winRate",
-];
+export const DISCOVER_CRAWLER_SORT_DIMENSIONS = DISCOVER_LEADERBOARD_SORTS;
+
+export const DISCOVER_CRAWLER_TIME_RANGES = DISCOVER_RANK_TIME_RANGES;
 
 export const DISCOVER_CRAWLER_PAGE_SIZE = 100;
-export const DISCOVER_CRAWLER_TIME_RANGE = "90" as const;
 export const DISCOVER_CRAWLER_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface DiscoverCrawlerResult {
   totalFetched: number;
   uniqueTraders: number;
   perPlatform: Record<string, number>;
-  errors: Array<{ platform: TraderPlatform; dimension: RankSortBy; message: string }>;
+  errors: Array<{
+    platform: TraderPlatform;
+    dimension: RankSortBy;
+    timeRange: RankTimeRange;
+    message: string;
+  }>;
   crawledAt: number;
+  deep: DiscoverDeepCrawlResult;
 }
 
 function toMilli(value: number) {
@@ -69,11 +78,12 @@ function mergeRankItem(
 async function crawlRankList(
   platform: TraderPlatform,
   sortBy: RankSortBy,
+  timeRange: RankTimeRange,
 ): Promise<TraderRankItem[]> {
   const result = await fetchTraderRankList({
     platform,
     sortBy,
-    timeRange: DISCOVER_CRAWLER_TIME_RANGE,
+    timeRange,
     page: 1,
     pageSize: DISCOVER_CRAWLER_PAGE_SIZE,
   });
@@ -85,88 +95,115 @@ export async function runDiscoverCrawler(): Promise<DiscoverCrawlerResult> {
   const errors: DiscoverCrawlerResult["errors"] = [];
   const perPlatform: Record<string, number> = {};
   let totalFetched = 0;
-
-  const mergedByPlatform = new Map<TraderPlatform, Map<string, TraderRankItem>>();
-
-  for (const platform of DISCOVER_CRAWLER_PLATFORMS) {
-    const platformMap = new Map<string, TraderRankItem>();
-
-    for (const dimension of DISCOVER_CRAWLER_SORT_DIMENSIONS) {
-      try {
-        const items = await crawlRankList(platform, dimension);
-        totalFetched += items.length;
-
-        for (const item of items) {
-          const existing = platformMap.get(item.traderId);
-          platformMap.set(item.traderId, mergeRankItem(existing, item));
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "unknown crawl error";
-        errors.push({ platform, dimension, message });
-      }
-    }
-
-    mergedByPlatform.set(platform, platformMap);
-    perPlatform[platform] = platformMap.size;
-  }
-
   let uniqueTraders = 0;
 
-  for (const [platform, platformMap] of mergedByPlatform) {
-    if (platformMap.size === 0) continue;
+  for (const platform of DISCOVER_CRAWLER_PLATFORMS) {
+    let platformTraderCount = 0;
 
-    const items = Array.from(platformMap.values());
-    uniqueTraders += items.length;
+    for (const timeRange of DISCOVER_CRAWLER_TIME_RANGES) {
+      const platformMap = new Map<string, TraderRankItem>();
 
-    const rows = items.map((item) => ({
-      platform,
-      traderId: item.traderId,
-      uniqueName: item.uniqueName,
-      nickName: item.nickName,
-      avatar: item.avatar,
-      sign: item.sign,
-      link: item.link,
-      yieldRatio: toMilli(item.yieldRatio),
-      pnl: toMilli(item.pnl),
-      aum: toMilli(item.aum),
-      followers: item.followers,
-      maxDrawdown: item.maxDrawdown !== null ? toMilli(item.maxDrawdown) : null,
-      winRate: item.winRate !== null ? toMilli(item.winRate) : null,
-      instNum: item.instNum,
-      yieldCurve: item.yieldCurve,
-      rankData: item,
-      crawledAt: new Date(crawledAt),
-    }));
+      for (const dimension of DISCOVER_CRAWLER_SORT_DIMENSIONS) {
+        try {
+          const items = await crawlRankList(platform, dimension, timeRange);
+          totalFetched += items.length;
 
-    const chunkSize = 50;
-    for (let index = 0; index < rows.length; index += chunkSize) {
-      const chunk = rows.slice(index, index + chunkSize);
+          for (const item of items) {
+            const existing = platformMap.get(item.traderId);
+            platformMap.set(item.traderId, mergeRankItem(existing, item));
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown crawl error";
+          errors.push({ platform, dimension, timeRange, message });
+        }
+      }
+
+      platformTraderCount += platformMap.size;
+      uniqueTraders += platformMap.size;
+
+      if (platformMap.size === 0) {
+        await db
+          .delete(discoverRankCache)
+          .where(
+            and(
+              eq(discoverRankCache.platform, platform),
+              eq(discoverRankCache.timeRange, timeRange),
+            ),
+          );
+        continue;
+      }
+
+      const items = Array.from(platformMap.values());
+      const rows = items.map((item) => ({
+        platform,
+        traderId: item.traderId,
+        timeRange,
+        uniqueName: item.uniqueName,
+        nickName: item.nickName,
+        avatar: item.avatar,
+        sign: item.sign,
+        link: item.link,
+        yieldRatio: toMilli(item.yieldRatio),
+        pnl: toMilli(item.pnl),
+        aum: toMilli(item.aum),
+        followers: item.followers,
+        maxDrawdown: item.maxDrawdown !== null ? toMilli(item.maxDrawdown) : null,
+        winRate: item.winRate !== null ? toMilli(item.winRate) : null,
+        instNum: item.instNum,
+        yieldCurve: item.yieldCurve,
+        rankData: item,
+        crawledAt: new Date(crawledAt),
+      }));
+
+      const chunkSize = 50;
+      for (let index = 0; index < rows.length; index += chunkSize) {
+        const chunk = rows.slice(index, index + chunkSize);
+        await db
+          .insert(discoverRankCache)
+          .values(chunk)
+          .onConflictDoUpdate({
+            target: [
+              discoverRankCache.platform,
+              discoverRankCache.traderId,
+              discoverRankCache.timeRange,
+            ],
+            set: {
+              uniqueName: sql`excluded.unique_name`,
+              nickName: sql`excluded.nick_name`,
+              avatar: sql`excluded.avatar`,
+              sign: sql`excluded.sign`,
+              link: sql`excluded.link`,
+              yieldRatio: sql`excluded.yield_ratio_milli`,
+              pnl: sql`excluded.pnl_milli`,
+              aum: sql`excluded.aum_milli`,
+              followers: sql`excluded.followers`,
+              maxDrawdown: sql`excluded.max_drawdown_milli`,
+              winRate: sql`excluded.win_rate_milli`,
+              instNum: sql`excluded.inst_num`,
+              yieldCurve: sql`excluded.yield_curve`,
+              rankData: sql`excluded.rank_data`,
+              crawledAt: sql`excluded.crawled_at`,
+              updatedAt: sql`now()`,
+            },
+          });
+      }
+
+      const traderIds = items.map((item) => item.traderId);
       await db
-        .insert(discoverRankCache)
-        .values(chunk)
-        .onConflictDoUpdate({
-          target: [discoverRankCache.platform, discoverRankCache.traderId],
-          set: {
-            uniqueName: sql`excluded.unique_name`,
-            nickName: sql`excluded.nick_name`,
-            avatar: sql`excluded.avatar`,
-            sign: sql`excluded.sign`,
-            link: sql`excluded.link`,
-            yieldRatio: sql`excluded.yield_ratio_milli`,
-            pnl: sql`excluded.pnl_milli`,
-            aum: sql`excluded.aum_milli`,
-            followers: sql`excluded.followers`,
-            maxDrawdown: sql`excluded.max_drawdown_milli`,
-            winRate: sql`excluded.win_rate_milli`,
-            instNum: sql`excluded.inst_num`,
-            yieldCurve: sql`excluded.yield_curve`,
-            rankData: sql`excluded.rank_data`,
-            crawledAt: sql`excluded.crawled_at`,
-            updatedAt: sql`now()`,
-          },
-        });
+        .delete(discoverRankCache)
+        .where(
+          and(
+            eq(discoverRankCache.platform, platform),
+            eq(discoverRankCache.timeRange, timeRange),
+            notInArray(discoverRankCache.traderId, traderIds),
+          ),
+        );
     }
+
+    perPlatform[platform] = platformTraderCount;
   }
+
+  const deep = await runDiscoverDeepCrawler();
 
   return {
     totalFetched,
@@ -174,12 +211,14 @@ export async function runDiscoverCrawler(): Promise<DiscoverCrawlerResult> {
     perPlatform,
     errors,
     crawledAt,
+    deep,
   };
 }
 
 export interface DiscoverCacheQuery {
   platforms: TraderPlatform[];
   sortBy: RankSortBy;
+  timeRange: RankTimeRange;
   page: number;
   pageSize: number;
 }
@@ -209,7 +248,12 @@ export async function queryDiscoverCache(query: DiscoverCacheQuery): Promise<Dis
   const rows = await db
     .select()
     .from(discoverRankCache)
-    .where(inArray(discoverRankCache.platform, platforms));
+    .where(
+      and(
+        inArray(discoverRankCache.platform, platforms),
+        eq(discoverRankCache.timeRange, query.timeRange),
+      ),
+    );
 
   if (rows.length === 0) {
     return { items: [], total: 0, crawledAt: null };
@@ -229,13 +273,19 @@ export async function queryDiscoverCache(query: DiscoverCacheQuery): Promise<Dis
 
 export async function queryAllDiscoverCache(
   platforms?: TraderPlatform[],
+  timeRange: RankTimeRange = "90",
 ): Promise<DiscoverCacheResult> {
   const platformList = platforms ?? DISCOVER_CRAWLER_PLATFORMS;
 
   const rows = await db
     .select()
     .from(discoverRankCache)
-    .where(inArray(discoverRankCache.platform, platformList));
+    .where(
+      and(
+        inArray(discoverRankCache.platform, platformList),
+        eq(discoverRankCache.timeRange, timeRange),
+      ),
+    );
 
   if (rows.length === 0) {
     return { items: [], total: 0, crawledAt: null };
@@ -250,24 +300,28 @@ export async function queryAllDiscoverCache(
 export async function getDiscoverCrawlerStatus(): Promise<{
   lastCrawledAt: number | null;
   totalCached: number;
+  totalCachedRows: number;
   perPlatform: Record<string, number>;
 }> {
   const rows = await db.select().from(discoverRankCache);
 
   if (rows.length === 0) {
-    return { lastCrawledAt: null, totalCached: 0, perPlatform: {} };
+    return { lastCrawledAt: null, totalCached: 0, totalCachedRows: 0, perPlatform: {} };
   }
 
   const perPlatform: Record<string, number> = {};
+  const distinctTraders = new Set<string>();
   for (const row of rows) {
     perPlatform[row.platform] = (perPlatform[row.platform] ?? 0) + 1;
+    distinctTraders.add(`${row.platform}:${row.traderId}`);
   }
 
   const lastCrawledAt = Math.max(...rows.map((r) => r.crawledAt.getTime()));
 
   return {
     lastCrawledAt,
-    totalCached: rows.length,
+    totalCached: distinctTraders.size,
+    totalCachedRows: rows.length,
     perPlatform,
   };
 }

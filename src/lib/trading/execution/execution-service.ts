@@ -1,6 +1,7 @@
 import "@tanstack/react-start/server-only";
 import "#/lib/trading/adapters/index";
 import { getAdapter } from "#/lib/trading/adapters/registry";
+import { isExchangeBackedMode } from "#/lib/trading/execution-mode";
 import type {
   CloseFill,
   ExecutionFill,
@@ -62,8 +63,8 @@ function createDryRunFill(
       openTime: now(),
     },
     notes: [
-      request.teacher.executionMode === "live"
-        ? "live create execution adapter placeholder used; no exchange order was sent"
+      isExchangeBackedMode(request.teacher.executionMode)
+        ? `${request.teacher.executionMode} create execution adapter placeholder used; no exchange order was sent`
         : "dry-run create execution generated",
     ],
   } satisfies ExecutionServiceResult;
@@ -74,6 +75,7 @@ async function createLiveOrder(request: ExecutionRequest, amount: number) {
   if (!adapter.createLiveOrder) return null;
   return adapter.createLiveOrder({
     credentials: request.teacher.credentials,
+    executionMode: request.teacher.executionMode,
     symbol: request.change.symbol,
     amount,
     positionSide: request.change.positionSide,
@@ -99,6 +101,7 @@ async function closeLiveOrders(
       matching.map((relation) =>
         adapter.closeLiveOrder!({
           credentials: request.teacher.credentials,
+          executionMode: request.teacher.executionMode,
           orderId: relation.orderId,
           symbol: relation.symbol,
           amount: Math.min(relation.amount, tracedAmount),
@@ -125,6 +128,7 @@ async function closeLiveOrders(
     matching.map((relation) =>
       adapter.closeLiveOrder!({
         credentials: request.teacher.credentials,
+        executionMode: request.teacher.executionMode,
         orderId: relation.orderId,
         symbol: relation.symbol,
         amount: relation.amount,
@@ -151,8 +155,8 @@ function closePartialForOrderClass(
   }
 
   const notes = [
-    mode === "live"
-      ? "live execution for partial order-class close is not wired yet; fill shape is reserved"
+    isExchangeBackedMode(mode)
+      ? `${mode} execution for partial order-class close is not wired yet; fill shape is reserved`
       : "dry-run partial order-class close generated",
   ];
   if (remaining > 0) notes.push(`partial close left ${remaining} amount unmatched`);
@@ -181,6 +185,7 @@ async function closeLiveOrdersForAmountDecrease(
       if (!(closedAmount > 0)) continue;
       const fill = await adapter.closeLiveOrder!({
         credentials: request.teacher.credentials,
+        executionMode: request.teacher.executionMode,
         orderId: relation.orderId,
         symbol: relation.symbol,
         amount: closedAmount,
@@ -207,10 +212,14 @@ export async function executePositionChange(
   const supportsLive = Boolean(adapter.createLiveOrder);
 
   if (request.change.added || isAmountIncrease(request.change)) {
-    if (mode === "live" && supportsLive) {
+    if (isExchangeBackedMode(mode) && supportsLive) {
       const tracedAmount = deriveTracedAmount(request);
       if (!(tracedAmount > 0)) {
-        return { mode, platformClass, notes: ["live create skipped because traced amount <= 0"] };
+        return {
+          mode,
+          platformClass,
+          notes: [`${mode} create skipped because traced amount <= 0`],
+        };
       }
       const fill = await createLiveOrder(request, tracedAmount);
       if (fill) {
@@ -218,7 +227,7 @@ export async function executePositionChange(
           mode,
           platformClass,
           createdFill: fill,
-          notes: [`${request.teacher.platform} live create order executed`],
+          notes: [`${request.teacher.platform} ${mode} create order executed`],
         };
       }
     }
@@ -226,7 +235,7 @@ export async function executePositionChange(
   }
 
   if (request.change.removed || isAmountDecrease(request.change)) {
-    if (mode === "live" && supportsLive) {
+    if (isExchangeBackedMode(mode) && supportsLive) {
       const closeResult = isAmountDecrease(request.change)
         ? await closeLiveOrdersForAmountDecrease(request, platformClass)
         : { closeFills: await closeLiveOrders(request, platformClass), notes: [] };
@@ -234,7 +243,7 @@ export async function executePositionChange(
         mode,
         platformClass,
         closeFills: closeResult.closeFills,
-        notes: [`${request.teacher.platform} live close order executed`, ...closeResult.notes],
+        notes: [`${request.teacher.platform} ${mode} close order executed`, ...closeResult.notes],
       };
     }
 

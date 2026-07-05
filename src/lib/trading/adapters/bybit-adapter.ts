@@ -5,8 +5,14 @@ import { fetchJson } from "#/lib/trading/adapters/fetch-utils";
 import type {
   EndpointDefinition,
   PlatformAdapter,
+  TeacherAccountSnapshot,
   TraderLiveSnapshot,
 } from "#/lib/trading/adapters/platform-adapter";
+import {
+  mapCcxtPositionsToSnapshots,
+  normalizeSwapSymbol,
+} from "#/lib/trading/adapters/shared-utils";
+import { createTeacherExchange } from "#/lib/trading/exchange-client";
 import type { TraderPlatformModel } from "#/lib/trading/trader-data-model";
 import type {
   RankSortBy,
@@ -15,7 +21,15 @@ import type {
   TraderRankQuery,
   TraderRankResult,
 } from "#/lib/trading/trader-rank-types";
-import type { PositionSide, PositionSnapshot, TraderRecord } from "#/lib/trading/types";
+import type {
+  CloseFill,
+  ExecutionFill,
+  ExecutionMode,
+  PositionSide,
+  PositionSnapshot,
+  TeacherCredentials,
+  TraderRecord,
+} from "#/lib/trading/types";
 
 function position(input: PositionSnapshot): PositionSnapshot {
   return { ...input };
@@ -396,6 +410,81 @@ const BYBIT_ENDPOINTS: EndpointDefinition[] = [
   },
 ];
 
+// ── teacher account / execution ──
+
+async function createBybitLiveOrder(input: {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+  symbol: string;
+  amount: number;
+  positionSide: "long" | "short";
+  followOrderId: string;
+}): Promise<ExecutionFill> {
+  const exchange = createTeacherExchange("bybit", input.credentials, input.executionMode ?? "live");
+  const side = input.positionSide === "long" ? "buy" : "sell";
+  const order = await exchange.createMarketOrder(
+    normalizeSwapSymbol(input.symbol),
+    side,
+    input.amount,
+  );
+  return {
+    orderId: String(order.id),
+    followOrderId: input.followOrderId,
+    symbol: input.symbol,
+    amount: input.amount,
+    positionSide: input.positionSide,
+    openAvgPrice: order.average ?? order.price ?? 0,
+    openTime: order.timestamp ?? Date.now(),
+  };
+}
+
+async function closeBybitLiveOrder(input: {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+  symbol: string;
+  amount: number;
+  positionSide: "long" | "short";
+  orderId: string;
+}): Promise<CloseFill> {
+  const exchange = createTeacherExchange("bybit", input.credentials, input.executionMode ?? "live");
+  const side = input.positionSide === "long" ? "sell" : "buy";
+  await exchange.createMarketOrder(normalizeSwapSymbol(input.symbol), side, input.amount);
+  return { orderId: input.orderId, closedAmount: input.amount, closeTime: Date.now() };
+}
+
+async function fetchBybitTeacherAccount(input: {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+}): Promise<TeacherAccountSnapshot> {
+  const exchange = createTeacherExchange("bybit", input.credentials, input.executionMode ?? "live");
+  const [balance, positions] = await Promise.all([
+    exchange.fetchBalance(),
+    exchange.fetchPositions(),
+  ]);
+  const toNum = (value: unknown) =>
+    typeof value === "number" ? value : typeof value === "string" && value ? Number(value) : 0;
+  const getUsdt = (key: "total" | "free") => {
+    const val = balance[key as keyof typeof balance] as unknown;
+    if (val && typeof val === "object") {
+      return toNum((val as Record<string, unknown>).USDT);
+    }
+    return 0;
+  };
+
+  const teacherPositions = mapCcxtPositionsToSnapshots(
+    positions as unknown as Array<Record<string, unknown>>,
+  );
+  const unrealizedPnl = teacherPositions.reduce((sum, position) => sum + (position.pnl ?? 0), 0);
+
+  return {
+    balance: getUsdt("total"),
+    equity: getUsdt("total") + unrealizedPnl,
+    freeUsdt: getUsdt("free"),
+    unrealizedPnl,
+    teacherPositions,
+  };
+}
+
 // ── adapter ──
 
 export const bybitAdapter: PlatformAdapter = {
@@ -407,6 +496,9 @@ export const bybitAdapter: PlatformAdapter = {
   endpoints: BYBIT_ENDPOINTS,
   fetchLiveSnapshot: fetchBybitSnapshot,
   fetchRankList: fetchBybitRankList,
+  createLiveOrder: createBybitLiveOrder,
+  closeLiveOrder: closeBybitLiveOrder,
+  fetchTeacherAccount: fetchBybitTeacherAccount,
   buildTraderLink: (traderId) =>
     `https://www.bybit.com/copyTrade/trade-center/detail?leaderMark=${encodeURIComponent(traderId)}`,
 };

@@ -99,6 +99,27 @@
       "when": 1782618974654,
       "tag": "0013_discover_rank_cache_bigint",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782618974655,
+      "tag": "0014_user_discover_favorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1782618974656,
+      "tag": "0015_discover_trader_deep_cache",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1782618974657,
+      "tag": "0016_discover_rank_cache_time_range",
+      "breakpoints": true
     }
   ]
 }

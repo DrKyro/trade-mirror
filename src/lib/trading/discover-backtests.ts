@@ -1,3 +1,7 @@
+import {
+  listTradeableHistoryPositions,
+  resolveBacktestWindowCutoff,
+} from "#/lib/trading/backtest-window";
 import type { TraderDeepAnalysis } from "#/lib/trading/trader-rank-types";
 import type {
   TraderBacktestMode,
@@ -7,24 +11,95 @@ import type {
   TraderBacktestWindow,
 } from "#/lib/trading/types";
 
+export {
+  filterHistoryPositionsByWindow,
+  summarizeBacktestWindow,
+  formatBacktestWindowRangeLabel,
+  listTradeableHistoryPositions,
+} from "#/lib/trading/backtest-window";
+export type { BacktestWindowPreview } from "#/lib/trading/backtest-window";
+
 function finite(value: number | null | undefined, fallback = 0) {
   return value == null || !Number.isFinite(value) ? fallback : value;
 }
 
-export function filterHistoryPositionsByWindow(
-  historyPositions: TraderDeepAnalysis["historyPositions"],
-  window: TraderBacktestWindow,
-) {
-  if (window === "all") {
-    return historyPositions;
+function resolveSourceProfitRate(position: TraderDeepAnalysis["historyPositions"][number]) {
+  const sourceProfit = finite(position.profit);
+  if (position.profitRate != null && Number.isFinite(position.profitRate)) {
+    return position.profitRate;
   }
 
-  const now = Date.now();
-  const windowMs = window === "30d" ? 30 * 24 * 60 * 60 * 1_000 : 90 * 24 * 60 * 60 * 1_000;
-  return historyPositions.filter((position) => {
-    const effectiveTime = position.closeTime ?? position.openTime;
-    return effectiveTime !== null && effectiveTime >= now - windowMs;
-  });
+  const notional = Math.abs(position.amount * position.entryPrice);
+  return notional > 0 ? sourceProfit / notional : 0;
+}
+
+type SimulationState = {
+  equity: number;
+  peakEquity: number;
+  cumulativeProfit: number;
+};
+
+function simulateTrade(
+  position: TraderDeepAnalysis["historyPositions"][number] & {
+    openTime: number;
+    closeTime: number;
+  },
+  mode: TraderBacktestMode,
+  initialBalance: number,
+  state: SimulationState,
+): { trade: TraderBacktestTrade; state: SimulationState } {
+  const sourceProfit = finite(position.profit);
+  const sourceProfitRate = resolveSourceProfitRate(position);
+  const capitalBase = mode === "compound" ? state.equity : initialBalance;
+  const simulatedProfit = capitalBase * sourceProfitRate;
+  const cumulativeProfit = state.cumulativeProfit + simulatedProfit;
+  const equity =
+    mode === "compound" ? state.equity + simulatedProfit : initialBalance + cumulativeProfit;
+  const peakEquity = Math.max(state.peakEquity, equity);
+  const drawdown = equity - peakEquity;
+  const drawdownRate = peakEquity > 0 ? drawdown / peakEquity : 0;
+
+  return {
+    trade: {
+      id: position.id,
+      symbol: position.symbol,
+      side: position.side,
+      openTime: position.openTime,
+      closeTime: position.closeTime,
+      amount: position.amount,
+      entryPrice: position.entryPrice,
+      closePrice: position.closePrice,
+      leverage: position.leverage,
+      sourceProfit,
+      sourceProfitRate,
+      simulatedProfit,
+      cumulativeProfit,
+      equityAfter: equity,
+      drawdown,
+      drawdownRate,
+    },
+    state: {
+      equity,
+      peakEquity,
+      cumulativeProfit,
+    },
+  };
+}
+
+function warmUpCompoundEquity(
+  positions: Array<
+    TraderDeepAnalysis["historyPositions"][number] & { openTime: number; closeTime: number }
+  >,
+  initialBalance: number,
+) {
+  let equity = initialBalance;
+
+  for (const position of positions) {
+    const sourceProfitRate = resolveSourceProfitRate(position);
+    equity += equity * sourceProfitRate;
+  }
+
+  return equity;
 }
 
 export function buildTraderBacktest(input: {
@@ -37,58 +112,31 @@ export function buildTraderBacktest(input: {
   timeline: TraderBacktestTimelinePoint[];
   trades: TraderBacktestTrade[];
 } {
-  const history = filterHistoryPositionsByWindow(input.analysis.historyPositions, input.window)
-    .filter(
-      (position) =>
-        position.openTime !== null &&
-        position.closeTime !== null &&
-        position.closeTime > position.openTime,
-    )
-    .slice()
-    .sort((left, right) => (left.closeTime ?? 0) - (right.closeTime ?? 0));
-
   const initialBalance = Math.max(input.initialBalance, 1);
-  let cumulativeProfit = 0;
-  let equity = initialBalance;
-  let peakEquity = initialBalance;
+  const allTradeable = listTradeableHistoryPositions(input.analysis.historyPositions);
+  const windowCutoff = resolveBacktestWindowCutoff(input.window);
+  const inWindow = allTradeable.filter((position) =>
+    windowCutoff === null ? true : position.closeTime >= windowCutoff,
+  );
 
-  const trades: TraderBacktestTrade[] = history.map((position) => {
-    const sourceProfit = finite(position.profit);
-    const sourceProfitRate =
-      position.profitRate ??
-      (() => {
-        const notional = Math.abs(position.amount * position.entryPrice);
-        return notional > 0 ? sourceProfit / notional : 0;
-      })();
+  let equityAtWindowStart = initialBalance;
+  if (input.mode === "compound" && windowCutoff !== null) {
+    const preWindow = allTradeable.filter((position) => position.closeTime < windowCutoff);
+    equityAtWindowStart = warmUpCompoundEquity(preWindow, initialBalance);
+  }
 
-    const capitalBase = input.mode === "compound" ? equity : initialBalance;
-    const simulatedProfit = capitalBase * sourceProfitRate;
-    cumulativeProfit += simulatedProfit;
-    equity =
-      input.mode === "compound" ? equity + simulatedProfit : initialBalance + cumulativeProfit;
-    peakEquity = Math.max(peakEquity, equity);
-    const drawdown = equity - peakEquity;
-    const drawdownRate = peakEquity > 0 ? drawdown / peakEquity : 0;
+  let state: SimulationState = {
+    equity: equityAtWindowStart,
+    peakEquity: equityAtWindowStart,
+    cumulativeProfit: 0,
+  };
 
-    return {
-      id: position.id,
-      symbol: position.symbol,
-      side: position.side,
-      openTime: position.openTime ?? 0,
-      closeTime: position.closeTime ?? 0,
-      amount: position.amount,
-      entryPrice: position.entryPrice,
-      closePrice: position.closePrice,
-      leverage: position.leverage,
-      sourceProfit,
-      sourceProfitRate,
-      simulatedProfit,
-      cumulativeProfit,
-      equityAfter: equity,
-      drawdown,
-      drawdownRate,
-    };
-  });
+  const trades: TraderBacktestTrade[] = [];
+  for (const position of inWindow) {
+    const result = simulateTrade(position, input.mode, initialBalance, state);
+    trades.push(result.trade);
+    state = result.state;
+  }
 
   const timeline: TraderBacktestTimelinePoint[] = trades.map((trade) => ({
     time: trade.closeTime,
@@ -114,8 +162,10 @@ export function buildTraderBacktest(input: {
     timeline.length > 0 ? Math.min(...timeline.map((point) => point.drawdown)) : 0;
   const maxDrawdownRate =
     timeline.length > 0 ? Math.min(...timeline.map((point) => point.drawdownRate)) : 0;
-  const finalEquity = trades.at(-1)?.equityAfter ?? initialBalance;
-  const totalReturn = initialBalance > 0 ? realizedProfit / initialBalance : 0;
+  const finalEquity = trades.at(-1)?.equityAfter ?? equityAtWindowStart;
+  const returnBase =
+    input.mode === "compound" && windowCutoff !== null ? equityAtWindowStart : initialBalance;
+  const totalReturn = returnBase > 0 ? realizedProfit / returnBase : 0;
   const averageTradeReturn =
     trades.length > 0
       ? trades.reduce((sum, trade) => sum + trade.sourceProfitRate, 0) / trades.length

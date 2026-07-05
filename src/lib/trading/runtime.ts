@@ -26,6 +26,7 @@ import {
   detectPositionChanges,
   updateTeacherMarksFromTraders,
 } from "#/lib/trading/engine";
+import { isExchangeBackedMode } from "#/lib/trading/execution-mode";
 import { ensureLegacyWsBridge } from "#/lib/trading/legacy-ws-bridge";
 import { supportsLiveRefresh } from "#/lib/trading/platform-utils";
 import {
@@ -574,8 +575,8 @@ class TradingRuntime {
         if (discoverCrawlerState.running) {
           this.discoverCrawlerScheduler.setRunning(false);
           this.discoverCrawlerScheduler.setLoop(null);
-          await this.startDiscoverCrawler();
         }
+        await this.startDiscoverCrawler();
 
         await this.reconcileMarketSubscriptions(await listTeachers(), await listTraders());
       })();
@@ -617,12 +618,12 @@ class TradingRuntime {
           entityType: "teacher",
           entityId: teacherRecord.id,
         });
-        if (teacherRecord.executionMode === "live") {
+        if (teacherRecord.executionMode === "live" || teacherRecord.executionMode === "demo") {
           await this.pushEvent({
             scope: "follow-engine",
             level: "info",
-            title: "live execution path selected",
-            detail: `${teacherRecord.name} used live execution mode for ${change.symbol} on ${teacherRecord.platform}.`,
+            title: `${teacherRecord.executionMode} execution path selected`,
+            detail: `${teacherRecord.name} used ${teacherRecord.executionMode} execution mode for ${change.symbol} on ${teacherRecord.platform}.`,
             entityType: "teacher",
             entityId: teacherRecord.id,
           });
@@ -665,7 +666,10 @@ class TradingRuntime {
     },
   ) {
     for (const teacherRecord of teachers) {
-      if (options?.refreshLiveAccounts && teacherRecord.executionMode === "live") {
+      if (
+        options?.refreshLiveAccounts &&
+        (teacherRecord.executionMode === "live" || teacherRecord.executionMode === "demo")
+      ) {
         try {
           const snapshot = await fetchTeacherAccountSnapshot(teacherRecord);
           teacherRecord.balance = snapshot.balance;
@@ -1121,6 +1125,10 @@ class TradingRuntime {
       return null;
     }
 
+    if (teacherRecord.executionMode === "dry-run") {
+      throw new Error("Internal paper accounts cannot refresh from an exchange API");
+    }
+
     const snapshot = await fetchTeacherAccountSnapshot(teacherRecord);
     teacherRecord.balance = snapshot.balance;
     teacherRecord.equity = snapshot.equity;
@@ -1154,9 +1162,13 @@ class TradingRuntime {
   async getDiscoverCrawlerStatus(): Promise<DiscoverCrawlerRuntimeState> {
     await this.ensureBooted();
     const state = await this.getDiscoverCrawlerState();
-    const { getDiscoverCrawlerStatus: getCacheStatus } =
+    const { getDiscoverCrawlerStatus: getRankCacheStatus } =
       await import("#/lib/trading/discover-crawler");
-    const cacheStatus = await getCacheStatus();
+    const { getDiscoverDeepCacheStatus } = await import("#/lib/trading/discover-deep-cache");
+    const [rankCache, deepCache] = await Promise.all([
+      getRankCacheStatus(),
+      getDiscoverDeepCacheStatus(),
+    ]);
     return {
       running: state.running,
       iterationCount: state.iterationCount,
@@ -1165,12 +1177,17 @@ class TradingRuntime {
       lastCompletedAt: state.lastCompletedAt,
       lastError: state.lastError,
       intervalMs: state.intervalMs,
+      rankCache,
+      deepCache,
       lastResultSummary: state.lastResult
         ? {
             totalFetched: state.lastResult.totalFetched,
             uniqueTraders: state.lastResult.uniqueTraders,
             perPlatform: state.lastResult.perPlatform,
             errorCount: state.lastResult.errors.length,
+            deepAttempted: state.lastResult.deep.attempted,
+            deepSucceeded: state.lastResult.deep.succeeded,
+            deepFailed: state.lastResult.deep.failed,
           }
         : null,
     };
@@ -1235,6 +1252,38 @@ class TradingRuntime {
     };
 
     await createTeacher(teacherRecord, input.ownerUserId ?? null);
+
+    if (
+      isExchangeBackedMode(teacherRecord.executionMode) &&
+      teacherRecord.credentials?.apiKey &&
+      teacherRecord.credentials.apiSecret
+    ) {
+      try {
+        const snapshot = await fetchTeacherAccountSnapshot(teacherRecord);
+        teacherRecord.balance = snapshot.balance;
+        teacherRecord.equity = snapshot.equity;
+        teacherRecord.freeUsdt = snapshot.freeUsdt;
+        teacherRecord.unrealizedPnl = snapshot.unrealizedPnl;
+        teacherRecord.teacherPositions = snapshot.teacherPositions.map((position) => ({
+          ...position,
+        }));
+        await updateTeacherRecord(teacherRecord.id, teacherRecord, input.ownerUserId ?? undefined);
+      } catch (error) {
+        const detail =
+          error instanceof Error
+            ? error.message
+            : "unknown teacher account initial refresh failure";
+        await this.pushEvent({
+          scope: "system",
+          level: "warn",
+          title: "teacher initial account refresh failed",
+          detail: `${teacherRecord.name} was added but the initial ${teacherRecord.executionMode} account snapshot failed: ${detail}`,
+          entityType: "teacher",
+          entityId: teacherRecord.id,
+        });
+      }
+    }
+
     await this.pushEvent({
       scope: "system",
       level: "info",

@@ -3,6 +3,12 @@ import type { TraderBacktestRunRecord, TraderBacktestTrade } from "#/lib/trading
 export type BacktestChartPoint = {
   label: string;
   value: number;
+  time?: number;
+  openTime?: number;
+  holdingDurationMs?: number;
+  sequence?: number;
+  granularity?: "day" | "datetime";
+  category?: string;
 };
 
 export type BacktestComparisonPoint = {
@@ -111,22 +117,36 @@ export function buildTraderBacktestAnalytics(
     averageDrawdownRate,
     equitySeries: trades.map((trade) => ({
       label: formatShortDate(trade.closeTime),
+      time: trade.closeTime,
+      sequence: trade.index + 1,
       value: trade.equityAfter,
     })),
     cumulativeProfitSeries: trades.map((trade) => ({
       label: formatShortDate(trade.closeTime),
+      time: trade.closeTime,
+      sequence: trade.index + 1,
       value: trade.cumulativeProfit,
     })),
     cumulativeReturnSeries: trades.map((trade) => ({
       label: formatShortDate(trade.closeTime),
+      time: trade.closeTime,
+      sequence: trade.index + 1,
       value: trade.cumulativeReturn,
     })),
     tradeProfitSeries: trades.map((trade) => ({
       label: `${trade.index + 1}`,
+      time: trade.closeTime,
+      openTime: trade.openTime,
+      holdingDurationMs: trade.holdingDurationMs,
+      sequence: trade.index + 1,
       value: trade.simulatedProfit,
     })),
     tradeNotionalSeries: trades.map((trade) => ({
       label: `${trade.index + 1}`,
+      time: trade.closeTime,
+      openTime: trade.openTime,
+      holdingDurationMs: trade.holdingDurationMs,
+      sequence: trade.index + 1,
       value: trade.notionalUsd,
     })),
     profitVsDrawdownSeries: trades.map((trade) => ({
@@ -143,7 +163,12 @@ export function buildTraderBacktestAnalytics(
     openWeekdayCounts,
     openDayDistribution: [...openDayMap.values()]
       .sort((left, right) => left.time - right.time)
-      .map(({ label, value }) => ({ label, value })),
+      .map(({ label, value, time }) => ({
+        label,
+        value,
+        time,
+        granularity: "day" as const,
+      })),
   };
 }
 

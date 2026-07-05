@@ -46,18 +46,18 @@ function AppLayout() {
             <Button
               variant="ghost"
               size="sm"
-              render={<Link to="/app/strategies" />}
+              render={<Link to="/app/traders" />}
               nativeButton={false}
             >
-              {t("nav.strategies")}
+              {t("nav.traders")}
             </Button>
             <Button
               variant="ghost"
               size="sm"
-              render={<Link to="/app/strategy-board" />}
+              render={<Link to="/app/performance" />}
               nativeButton={false}
             >
-              {t("nav.strategyBoard")}
+              {t("nav.performance")}
             </Button>
             <Button
               variant="ghost"
@@ -70,10 +70,10 @@ function AppLayout() {
             <Button
               variant="ghost"
               size="sm"
-              render={<Link to="/app/teachers" />}
+              render={<Link to="/app/accounts" />}
               nativeButton={false}
             >
-              {t("nav.teachers")}
+              {t("nav.accounts")}
             </Button>
             <Button
               variant="ghost"

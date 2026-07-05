@@ -4,6 +4,16 @@ export type RankSortBy = "yieldRatio" | "pnl" | "aum" | "followers" | "maxDrawdo
 
 export type RankTimeRange = "7" | "30" | "90";
 
+export interface DiscoverFavoriteRecord {
+  platform: TraderPlatform;
+  traderId: string;
+  uniqueName: string;
+  nickName: string;
+  avatar: string;
+  link: string;
+  createdAt: number;
+}
+
 export interface TraderRankItem {
   traderId: string;
   uniqueName: string;
@@ -109,3 +119,14 @@ export interface TraderDeepAnalysis {
     }>;
   };
 }
+
+export type TraderDeepAnalysisResponse =
+  | {
+      status: "ready";
+      analysis: TraderDeepAnalysis;
+      crawledAt: number;
+    }
+  | {
+      status: "pending";
+      rankCrawledAt: number | null;
+    };

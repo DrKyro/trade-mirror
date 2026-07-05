@@ -20,21 +20,17 @@ function AppDashboardPage() {
             {t("dashboard.description")}
           </p>
           <div className="flex flex-wrap gap-3">
-            <Button render={<Link to="/app/strategies" />} nativeButton={false}>
-              {t("dashboard.openStrategies")}
+            <Button render={<Link to="/app/traders" />} nativeButton={false}>
+              {t("dashboard.openTraders")}
             </Button>
-            <Button
-              variant="outline"
-              render={<Link to="/app/strategy-board" />}
-              nativeButton={false}
-            >
-              {t("dashboard.openStrategyBoard")}
+            <Button variant="outline" render={<Link to="/app/performance" />} nativeButton={false}>
+              {t("dashboard.openPerformance")}
             </Button>
             <Button variant="outline" render={<Link to="/app/messages" />} nativeButton={false}>
               {t("dashboard.openMessages")}
             </Button>
-            <Button variant="outline" render={<Link to="/app/teachers" />} nativeButton={false}>
-              {t("dashboard.openTeachers")}
+            <Button variant="outline" render={<Link to="/app/accounts" />} nativeButton={false}>
+              {t("dashboard.openAccounts")}
             </Button>
             <Button variant="outline" render={<Link to="/app/system" />} nativeButton={false}>
               {t("dashboard.openSystem")}

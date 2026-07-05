@@ -5,18 +5,18 @@ import { useState } from "react";
 import { TradingPageShell } from "#/components/trading/page-shell";
 import { Button } from "#/components/ui/button";
 import { useI18n } from "#/lib/i18n";
-import { teacherLogContentQueryOptions, teacherLogsQueryOptions } from "#/lib/system/log-queries";
+import { accountLogContentQueryOptions, accountLogsQueryOptions } from "#/lib/system/log-queries";
 
-export const Route = createFileRoute("/_auth/app/teachers/$teacherId/logs")({
+export const Route = createFileRoute("/_auth/app/accounts/$accountId/logs")({
   loader: async ({ context, params }) => {
     const logs = await context.queryClient.ensureQueryData(
-      teacherLogsQueryOptions(params.teacherId),
+      accountLogsQueryOptions(params.accountId),
     );
     const initialLog = logs[0] ?? null;
     const initialContent = initialLog
       ? await context.queryClient.ensureQueryData(
-          teacherLogContentQueryOptions(
-            params.teacherId,
+          accountLogContentQueryOptions(
+            params.accountId,
             initialLog.sourceKey,
             initialLog.relativePath,
           ),
@@ -24,17 +24,17 @@ export const Route = createFileRoute("/_auth/app/teachers/$teacherId/logs")({
       : null;
 
     return {
-      teacherId: params.teacherId,
+      accountId: params.accountId,
       logs,
       initialLog,
       initialContent,
     };
   },
-  component: TeacherLogsPage,
+  component: AccountLogsPage,
 });
 
-function TeacherLogsPage() {
-  const { teacherId, logs, initialLog, initialContent } = Route.useLoaderData();
+function AccountLogsPage() {
+  const { accountId, logs, initialLog, initialContent } = Route.useLoaderData();
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const [selectedLogPath, setSelectedLogPath] = useState(
@@ -48,20 +48,20 @@ function TeacherLogsPage() {
 
   return (
     <TradingPageShell
-      title={`${t("teachers.title")} / ${t("logs.title")}`}
-      description={t("teacherLogs.description", { teacherId })}
+      title={`${accountId} / ${t("logs.title")}`}
+      description={t("accountLogs.description", { accountId })}
     >
       <div className="mb-4 flex items-center gap-3">
         <Button
           variant="outline"
           size="sm"
-          render={<Link to="/app/teachers" />}
+          render={<Link to="/app/accounts/$accountId" params={{ accountId }} />}
           nativeButton={false}
         >
-          {t("common.goBack")}
+          {t("accounts.detail.back")}
         </Button>
         <div className="text-sm text-muted-foreground">
-          {t("teacherLogs.fileCount", { teacherId, count: logs.length })}
+          {t("accountLogs.fileCount", { accountId, count: logs.length })}
         </div>
       </div>
 
@@ -84,8 +84,8 @@ function TeacherLogsPage() {
                     onClick={async () => {
                       setSelectedLogPath(value);
                       const next = await queryClient.ensureQueryData(
-                        teacherLogContentQueryOptions(
-                          teacherId,
+                        accountLogContentQueryOptions(
+                          accountId,
                           entry.sourceKey,
                           entry.relativePath,
                         ),
@@ -104,7 +104,7 @@ function TeacherLogsPage() {
                 );
               })
             ) : (
-              <div className="p-4 text-sm text-muted-foreground">{t("teacherLogs.noLogs")}</div>
+              <div className="p-4 text-sm text-muted-foreground">{t("accountLogs.noLogs")}</div>
             )}
           </div>
         </div>

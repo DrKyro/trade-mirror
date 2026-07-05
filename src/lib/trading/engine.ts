@@ -287,7 +287,7 @@ function createTeacherPosition(relation: FollowOrderRelation, leverage: number):
 
 function syncTeacherComputedFields(teacher: TeacherRecord) {
   const hasLiveAccountSnapshot =
-    teacher.executionMode === "live" &&
+    (teacher.executionMode === "live" || teacher.executionMode === "demo") &&
     (teacher.balance !== 0 ||
       teacher.equity !== 0 ||
       teacher.freeUsdt !== 0 ||

@@ -21,16 +21,20 @@ import { Route as ApiTradingRefreshRouteImport } from './routes/api/trading/refr
 import { Route as ApiTradingIngestRouteImport } from './routes/api/trading/ingest'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AuthAppUsersRouteImport } from './routes/_auth/app/users'
-import { Route as AuthAppTeachersRouteImport } from './routes/_auth/app/teachers'
+import { Route as AuthAppTradersRouteImport } from './routes/_auth/app/traders'
 import { Route as AuthAppSystemRouteImport } from './routes/_auth/app/system'
 import { Route as AuthAppStrategyBoardRouteImport } from './routes/_auth/app/strategy-board'
 import { Route as AuthAppStrategiesRouteImport } from './routes/_auth/app/strategies'
+import { Route as AuthAppPerformanceRouteImport } from './routes/_auth/app/performance'
 import { Route as AuthAppMessagesRouteImport } from './routes/_auth/app/messages'
 import { Route as AuthAppLogsRouteImport } from './routes/_auth/app/logs'
 import { Route as AuthAppDiscoverRouteImport } from './routes/_auth/app/discover'
 import { Route as AuthAppApiHealthRouteImport } from './routes/_auth/app/api-health'
-import { Route as AuthAppTeachersTeacherIdLogsRouteImport } from './routes/_auth/app/teachers.$teacherId.logs'
+import { Route as AuthAppAccountsRouteImport } from './routes/_auth/app/accounts'
+import { Route as AuthAppTradersTraderIdRouteImport } from './routes/_auth/app/traders.$traderId'
+import { Route as AuthAppAccountsAccountIdRouteImport } from './routes/_auth/app/accounts.$accountId'
 import { Route as AuthAppBacktestPlatformTraderIdRouteImport } from './routes/_auth/app/backtest.$platform.$traderId'
+import { Route as AuthAppAccountsAccountIdLogsRouteImport } from './routes/_auth/app/accounts.$accountId.logs'
 
 const AboutRoute = AboutRouteImport.update({
   id: '/about',
@@ -90,9 +94,9 @@ const AuthAppUsersRoute = AuthAppUsersRouteImport.update({
   path: '/users',
   getParentRoute: () => AuthAppRouteRoute,
 } as any)
-const AuthAppTeachersRoute = AuthAppTeachersRouteImport.update({
-  id: '/teachers',
-  path: '/teachers',
+const AuthAppTradersRoute = AuthAppTradersRouteImport.update({
+  id: '/traders',
+  path: '/traders',
   getParentRoute: () => AuthAppRouteRoute,
 } as any)
 const AuthAppSystemRoute = AuthAppSystemRouteImport.update({
@@ -108,6 +112,11 @@ const AuthAppStrategyBoardRoute = AuthAppStrategyBoardRouteImport.update({
 const AuthAppStrategiesRoute = AuthAppStrategiesRouteImport.update({
   id: '/strategies',
   path: '/strategies',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppPerformanceRoute = AuthAppPerformanceRouteImport.update({
+  id: '/performance',
+  path: '/performance',
   getParentRoute: () => AuthAppRouteRoute,
 } as any)
 const AuthAppMessagesRoute = AuthAppMessagesRouteImport.update({
@@ -130,17 +139,33 @@ const AuthAppApiHealthRoute = AuthAppApiHealthRouteImport.update({
   path: '/api-health',
   getParentRoute: () => AuthAppRouteRoute,
 } as any)
-const AuthAppTeachersTeacherIdLogsRoute =
-  AuthAppTeachersTeacherIdLogsRouteImport.update({
-    id: '/$teacherId/logs',
-    path: '/$teacherId/logs',
-    getParentRoute: () => AuthAppTeachersRoute,
+const AuthAppAccountsRoute = AuthAppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
+  getParentRoute: () => AuthAppRouteRoute,
+} as any)
+const AuthAppTradersTraderIdRoute = AuthAppTradersTraderIdRouteImport.update({
+  id: '/$traderId',
+  path: '/$traderId',
+  getParentRoute: () => AuthAppTradersRoute,
+} as any)
+const AuthAppAccountsAccountIdRoute =
+  AuthAppAccountsAccountIdRouteImport.update({
+    id: '/$accountId',
+    path: '/$accountId',
+    getParentRoute: () => AuthAppAccountsRoute,
   } as any)
 const AuthAppBacktestPlatformTraderIdRoute =
   AuthAppBacktestPlatformTraderIdRouteImport.update({
     id: '/backtest/$platform/$traderId',
     path: '/backtest/$platform/$traderId',
     getParentRoute: () => AuthAppRouteRoute,
+  } as any)
+const AuthAppAccountsAccountIdLogsRoute =
+  AuthAppAccountsAccountIdLogsRouteImport.update({
+    id: '/logs',
+    path: '/logs',
+    getParentRoute: () => AuthAppAccountsAccountIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -149,42 +174,50 @@ export interface FileRoutesByFullPath {
   '/app': typeof AuthAppRouteRouteWithChildren
   '/login': typeof GuestLoginRoute
   '/signup': typeof GuestSignupRoute
+  '/app/accounts': typeof AuthAppAccountsRouteWithChildren
   '/app/api-health': typeof AuthAppApiHealthRoute
   '/app/discover': typeof AuthAppDiscoverRoute
   '/app/logs': typeof AuthAppLogsRoute
   '/app/messages': typeof AuthAppMessagesRoute
+  '/app/performance': typeof AuthAppPerformanceRoute
   '/app/strategies': typeof AuthAppStrategiesRoute
   '/app/strategy-board': typeof AuthAppStrategyBoardRoute
   '/app/system': typeof AuthAppSystemRoute
-  '/app/teachers': typeof AuthAppTeachersRouteWithChildren
+  '/app/traders': typeof AuthAppTradersRouteWithChildren
   '/app/users': typeof AuthAppUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trading/ingest': typeof ApiTradingIngestRoute
   '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/app/': typeof AuthAppIndexRoute
+  '/app/accounts/$accountId': typeof AuthAppAccountsAccountIdRouteWithChildren
+  '/app/traders/$traderId': typeof AuthAppTradersTraderIdRoute
+  '/app/accounts/$accountId/logs': typeof AuthAppAccountsAccountIdLogsRoute
   '/app/backtest/$platform/$traderId': typeof AuthAppBacktestPlatformTraderIdRoute
-  '/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/about': typeof AboutRoute
   '/login': typeof GuestLoginRoute
   '/signup': typeof GuestSignupRoute
+  '/app/accounts': typeof AuthAppAccountsRouteWithChildren
   '/app/api-health': typeof AuthAppApiHealthRoute
   '/app/discover': typeof AuthAppDiscoverRoute
   '/app/logs': typeof AuthAppLogsRoute
   '/app/messages': typeof AuthAppMessagesRoute
+  '/app/performance': typeof AuthAppPerformanceRoute
   '/app/strategies': typeof AuthAppStrategiesRoute
   '/app/strategy-board': typeof AuthAppStrategyBoardRoute
   '/app/system': typeof AuthAppSystemRoute
-  '/app/teachers': typeof AuthAppTeachersRouteWithChildren
+  '/app/traders': typeof AuthAppTradersRouteWithChildren
   '/app/users': typeof AuthAppUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trading/ingest': typeof ApiTradingIngestRoute
   '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/app': typeof AuthAppIndexRoute
+  '/app/accounts/$accountId': typeof AuthAppAccountsAccountIdRouteWithChildren
+  '/app/traders/$traderId': typeof AuthAppTradersTraderIdRoute
+  '/app/accounts/$accountId/logs': typeof AuthAppAccountsAccountIdLogsRoute
   '/app/backtest/$platform/$traderId': typeof AuthAppBacktestPlatformTraderIdRoute
-  '/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -195,21 +228,25 @@ export interface FileRoutesById {
   '/_auth/app': typeof AuthAppRouteRouteWithChildren
   '/_guest/login': typeof GuestLoginRoute
   '/_guest/signup': typeof GuestSignupRoute
+  '/_auth/app/accounts': typeof AuthAppAccountsRouteWithChildren
   '/_auth/app/api-health': typeof AuthAppApiHealthRoute
   '/_auth/app/discover': typeof AuthAppDiscoverRoute
   '/_auth/app/logs': typeof AuthAppLogsRoute
   '/_auth/app/messages': typeof AuthAppMessagesRoute
+  '/_auth/app/performance': typeof AuthAppPerformanceRoute
   '/_auth/app/strategies': typeof AuthAppStrategiesRoute
   '/_auth/app/strategy-board': typeof AuthAppStrategyBoardRoute
   '/_auth/app/system': typeof AuthAppSystemRoute
-  '/_auth/app/teachers': typeof AuthAppTeachersRouteWithChildren
+  '/_auth/app/traders': typeof AuthAppTradersRouteWithChildren
   '/_auth/app/users': typeof AuthAppUsersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/trading/ingest': typeof ApiTradingIngestRoute
   '/api/trading/refresh': typeof ApiTradingRefreshRoute
   '/_auth/app/': typeof AuthAppIndexRoute
+  '/_auth/app/accounts/$accountId': typeof AuthAppAccountsAccountIdRouteWithChildren
+  '/_auth/app/traders/$traderId': typeof AuthAppTradersTraderIdRoute
+  '/_auth/app/accounts/$accountId/logs': typeof AuthAppAccountsAccountIdLogsRoute
   '/_auth/app/backtest/$platform/$traderId': typeof AuthAppBacktestPlatformTraderIdRoute
-  '/_auth/app/teachers/$teacherId/logs': typeof AuthAppTeachersTeacherIdLogsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -219,42 +256,50 @@ export interface FileRouteTypes {
     | '/app'
     | '/login'
     | '/signup'
+    | '/app/accounts'
     | '/app/api-health'
     | '/app/discover'
     | '/app/logs'
     | '/app/messages'
+    | '/app/performance'
     | '/app/strategies'
     | '/app/strategy-board'
     | '/app/system'
-    | '/app/teachers'
+    | '/app/traders'
     | '/app/users'
     | '/api/auth/$'
     | '/api/trading/ingest'
     | '/api/trading/refresh'
     | '/app/'
+    | '/app/accounts/$accountId'
+    | '/app/traders/$traderId'
+    | '/app/accounts/$accountId/logs'
     | '/app/backtest/$platform/$traderId'
-    | '/app/teachers/$teacherId/logs'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/about'
     | '/login'
     | '/signup'
+    | '/app/accounts'
     | '/app/api-health'
     | '/app/discover'
     | '/app/logs'
     | '/app/messages'
+    | '/app/performance'
     | '/app/strategies'
     | '/app/strategy-board'
     | '/app/system'
-    | '/app/teachers'
+    | '/app/traders'
     | '/app/users'
     | '/api/auth/$'
     | '/api/trading/ingest'
     | '/api/trading/refresh'
     | '/app'
+    | '/app/accounts/$accountId'
+    | '/app/traders/$traderId'
+    | '/app/accounts/$accountId/logs'
     | '/app/backtest/$platform/$traderId'
-    | '/app/teachers/$teacherId/logs'
   id:
     | '__root__'
     | '/'
@@ -264,21 +309,25 @@ export interface FileRouteTypes {
     | '/_auth/app'
     | '/_guest/login'
     | '/_guest/signup'
+    | '/_auth/app/accounts'
     | '/_auth/app/api-health'
     | '/_auth/app/discover'
     | '/_auth/app/logs'
     | '/_auth/app/messages'
+    | '/_auth/app/performance'
     | '/_auth/app/strategies'
     | '/_auth/app/strategy-board'
     | '/_auth/app/system'
-    | '/_auth/app/teachers'
+    | '/_auth/app/traders'
     | '/_auth/app/users'
     | '/api/auth/$'
     | '/api/trading/ingest'
     | '/api/trading/refresh'
     | '/_auth/app/'
+    | '/_auth/app/accounts/$accountId'
+    | '/_auth/app/traders/$traderId'
+    | '/_auth/app/accounts/$accountId/logs'
     | '/_auth/app/backtest/$platform/$traderId'
-    | '/_auth/app/teachers/$teacherId/logs'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -377,11 +426,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAppUsersRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
-    '/_auth/app/teachers': {
-      id: '/_auth/app/teachers'
-      path: '/teachers'
-      fullPath: '/app/teachers'
-      preLoaderRoute: typeof AuthAppTeachersRouteImport
+    '/_auth/app/traders': {
+      id: '/_auth/app/traders'
+      path: '/traders'
+      fullPath: '/app/traders'
+      preLoaderRoute: typeof AuthAppTradersRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
     '/_auth/app/system': {
@@ -403,6 +452,13 @@ declare module '@tanstack/react-router' {
       path: '/strategies'
       fullPath: '/app/strategies'
       preLoaderRoute: typeof AuthAppStrategiesRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/performance': {
+      id: '/_auth/app/performance'
+      path: '/performance'
+      fullPath: '/app/performance'
+      preLoaderRoute: typeof AuthAppPerformanceRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
     '/_auth/app/messages': {
@@ -433,12 +489,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAppApiHealthRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
-    '/_auth/app/teachers/$teacherId/logs': {
-      id: '/_auth/app/teachers/$teacherId/logs'
-      path: '/$teacherId/logs'
-      fullPath: '/app/teachers/$teacherId/logs'
-      preLoaderRoute: typeof AuthAppTeachersTeacherIdLogsRouteImport
-      parentRoute: typeof AuthAppTeachersRoute
+    '/_auth/app/accounts': {
+      id: '/_auth/app/accounts'
+      path: '/accounts'
+      fullPath: '/app/accounts'
+      preLoaderRoute: typeof AuthAppAccountsRouteImport
+      parentRoute: typeof AuthAppRouteRoute
+    }
+    '/_auth/app/traders/$traderId': {
+      id: '/_auth/app/traders/$traderId'
+      path: '/$traderId'
+      fullPath: '/app/traders/$traderId'
+      preLoaderRoute: typeof AuthAppTradersTraderIdRouteImport
+      parentRoute: typeof AuthAppTradersRoute
+    }
+    '/_auth/app/accounts/$accountId': {
+      id: '/_auth/app/accounts/$accountId'
+      path: '/$accountId'
+      fullPath: '/app/accounts/$accountId'
+      preLoaderRoute: typeof AuthAppAccountsAccountIdRouteImport
+      parentRoute: typeof AuthAppAccountsRoute
     }
     '/_auth/app/backtest/$platform/$traderId': {
       id: '/_auth/app/backtest/$platform/$traderId'
@@ -447,44 +517,81 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthAppBacktestPlatformTraderIdRouteImport
       parentRoute: typeof AuthAppRouteRoute
     }
+    '/_auth/app/accounts/$accountId/logs': {
+      id: '/_auth/app/accounts/$accountId/logs'
+      path: '/logs'
+      fullPath: '/app/accounts/$accountId/logs'
+      preLoaderRoute: typeof AuthAppAccountsAccountIdLogsRouteImport
+      parentRoute: typeof AuthAppAccountsAccountIdRoute
+    }
   }
 }
 
-interface AuthAppTeachersRouteChildren {
-  AuthAppTeachersTeacherIdLogsRoute: typeof AuthAppTeachersTeacherIdLogsRoute
+interface AuthAppAccountsAccountIdRouteChildren {
+  AuthAppAccountsAccountIdLogsRoute: typeof AuthAppAccountsAccountIdLogsRoute
 }
 
-const AuthAppTeachersRouteChildren: AuthAppTeachersRouteChildren = {
-  AuthAppTeachersTeacherIdLogsRoute: AuthAppTeachersTeacherIdLogsRoute,
+const AuthAppAccountsAccountIdRouteChildren: AuthAppAccountsAccountIdRouteChildren =
+  {
+    AuthAppAccountsAccountIdLogsRoute: AuthAppAccountsAccountIdLogsRoute,
+  }
+
+const AuthAppAccountsAccountIdRouteWithChildren =
+  AuthAppAccountsAccountIdRoute._addFileChildren(
+    AuthAppAccountsAccountIdRouteChildren,
+  )
+
+interface AuthAppAccountsRouteChildren {
+  AuthAppAccountsAccountIdRoute: typeof AuthAppAccountsAccountIdRouteWithChildren
 }
 
-const AuthAppTeachersRouteWithChildren = AuthAppTeachersRoute._addFileChildren(
-  AuthAppTeachersRouteChildren,
+const AuthAppAccountsRouteChildren: AuthAppAccountsRouteChildren = {
+  AuthAppAccountsAccountIdRoute: AuthAppAccountsAccountIdRouteWithChildren,
+}
+
+const AuthAppAccountsRouteWithChildren = AuthAppAccountsRoute._addFileChildren(
+  AuthAppAccountsRouteChildren,
+)
+
+interface AuthAppTradersRouteChildren {
+  AuthAppTradersTraderIdRoute: typeof AuthAppTradersTraderIdRoute
+}
+
+const AuthAppTradersRouteChildren: AuthAppTradersRouteChildren = {
+  AuthAppTradersTraderIdRoute: AuthAppTradersTraderIdRoute,
+}
+
+const AuthAppTradersRouteWithChildren = AuthAppTradersRoute._addFileChildren(
+  AuthAppTradersRouteChildren,
 )
 
 interface AuthAppRouteRouteChildren {
+  AuthAppAccountsRoute: typeof AuthAppAccountsRouteWithChildren
   AuthAppApiHealthRoute: typeof AuthAppApiHealthRoute
   AuthAppDiscoverRoute: typeof AuthAppDiscoverRoute
   AuthAppLogsRoute: typeof AuthAppLogsRoute
   AuthAppMessagesRoute: typeof AuthAppMessagesRoute
+  AuthAppPerformanceRoute: typeof AuthAppPerformanceRoute
   AuthAppStrategiesRoute: typeof AuthAppStrategiesRoute
   AuthAppStrategyBoardRoute: typeof AuthAppStrategyBoardRoute
   AuthAppSystemRoute: typeof AuthAppSystemRoute
-  AuthAppTeachersRoute: typeof AuthAppTeachersRouteWithChildren
+  AuthAppTradersRoute: typeof AuthAppTradersRouteWithChildren
   AuthAppUsersRoute: typeof AuthAppUsersRoute
   AuthAppIndexRoute: typeof AuthAppIndexRoute
   AuthAppBacktestPlatformTraderIdRoute: typeof AuthAppBacktestPlatformTraderIdRoute
 }
 
 const AuthAppRouteRouteChildren: AuthAppRouteRouteChildren = {
+  AuthAppAccountsRoute: AuthAppAccountsRouteWithChildren,
   AuthAppApiHealthRoute: AuthAppApiHealthRoute,
   AuthAppDiscoverRoute: AuthAppDiscoverRoute,
   AuthAppLogsRoute: AuthAppLogsRoute,
   AuthAppMessagesRoute: AuthAppMessagesRoute,
+  AuthAppPerformanceRoute: AuthAppPerformanceRoute,
   AuthAppStrategiesRoute: AuthAppStrategiesRoute,
   AuthAppStrategyBoardRoute: AuthAppStrategyBoardRoute,
   AuthAppSystemRoute: AuthAppSystemRoute,
-  AuthAppTeachersRoute: AuthAppTeachersRouteWithChildren,
+  AuthAppTradersRoute: AuthAppTradersRouteWithChildren,
   AuthAppUsersRoute: AuthAppUsersRoute,
   AuthAppIndexRoute: AuthAppIndexRoute,
   AuthAppBacktestPlatformTraderIdRoute: AuthAppBacktestPlatformTraderIdRoute,

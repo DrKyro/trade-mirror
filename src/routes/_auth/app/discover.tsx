@@ -9,9 +9,11 @@ import {
   Table2Icon,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
 
+import { DiscoverFavoriteButton } from "#/components/trading/discover-favorite-button";
 import { TradingPageShell } from "#/components/trading/page-shell";
+import { useDiscoverDeepAnalysis } from "#/components/trading/use-discover-deep-analysis";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import {
@@ -23,12 +25,22 @@ import {
 } from "#/components/ui/sheet";
 import { Skeleton } from "#/components/ui/skeleton";
 import { useI18n } from "#/lib/i18n";
-import { $fetchTraderDeepAnalysis, $fetchTraderRankList } from "#/lib/trading/discover-repository";
+import { formatBacktestCompactDateTime } from "#/lib/trading/backtest-time-format";
+import { isDiscoverFavorite, mergeFavoriteWithRankItems } from "#/lib/trading/discover-favorites";
+import {
+  DISCOVER_LEADERBOARD_SORTS,
+  DISCOVER_LOCAL_SORTS,
+  DISCOVER_RANK_TIME_RANGES,
+  isDiscoverLeaderboardSort,
+} from "#/lib/trading/discover-rank-config";
+import { $fetchTraderRankList, $listDiscoverFavorites } from "#/lib/trading/discover-repository";
 import { SUPPORTED_RANK_PLATFORMS } from "#/lib/trading/trader-rank-adapters";
 import type {
+  DiscoverFavoriteRecord,
   RankSortBy,
   RankTimeRange,
   TraderDeepAnalysis,
+  TraderDeepAnalysisResponse,
   TraderRankPlatformError,
   TraderRankItem,
 } from "#/lib/trading/trader-rank-types";
@@ -38,34 +50,53 @@ export const Route = createFileRoute("/_auth/app/discover")({
   component: DiscoverPage,
 });
 
-const SORT_OPTIONS: { value: RankSortBy; labelKey: string }[] = [
-  { value: "yieldRatio", labelKey: "discover.yieldRatio" },
-  { value: "pnl", labelKey: "discover.pnl" },
-  { value: "aum", labelKey: "discover.aum" },
-  { value: "followers", labelKey: "discover.followers" },
-  { value: "maxDrawdown", labelKey: "discover.maxDrawdown" },
-  { value: "winRate", labelKey: "discover.winRate" },
-];
+const LEADERBOARD_SORT_OPTIONS: { value: RankSortBy; labelKey: string }[] =
+  DISCOVER_LEADERBOARD_SORTS.map((value) => ({
+    value,
+    labelKey:
+      value === "yieldRatio"
+        ? "discover.yieldRatio"
+        : value === "pnl"
+          ? "discover.pnl"
+          : "discover.yieldRatio",
+  }));
 
-const TIME_OPTIONS: { value: RankTimeRange; labelKey: string }[] = [
-  { value: "7", labelKey: "discover.days7" },
-  { value: "30", labelKey: "discover.days30" },
-  { value: "90", labelKey: "discover.days90" },
-];
+const LOCAL_SORT_OPTIONS: { value: RankSortBy; labelKey: string }[] = DISCOVER_LOCAL_SORTS.map(
+  (value) => ({
+    value,
+    labelKey:
+      value === "aum"
+        ? "discover.aum"
+        : value === "followers"
+          ? "discover.followers"
+          : value === "maxDrawdown"
+            ? "discover.maxDrawdown"
+            : "discover.winRate",
+  }),
+);
+
+const TIME_OPTIONS: { value: RankTimeRange; labelKey: string }[] = DISCOVER_RANK_TIME_RANGES.map(
+  (value) => ({
+    value,
+    labelKey:
+      value === "7" ? "discover.days7" : value === "30" ? "discover.days30" : "discover.days90",
+  }),
+);
 
 const VIEW_MODES = [
   { value: "cards", labelKey: "discover.cardsView", icon: LayoutGridIcon },
   { value: "table", labelKey: "discover.tableView", icon: Table2Icon },
 ] as const;
 
-const PLATFORMS: { value: TraderPlatform; label: string }[] = [
+const PLATFORMS: { value: TraderPlatform; label: string; comingSoon?: boolean }[] = [
   { value: "okx", label: "OKX" },
   { value: "bitget", label: "Bitget" },
   { value: "binanceFutures", label: "Binance Futures" },
-  { value: "bybit", label: "Bybit" },
+  { value: "bybit", label: "Bybit", comingSoon: true },
 ];
 
 type DiscoverViewMode = (typeof VIEW_MODES)[number]["value"];
+type DiscoverScope = "all" | "favorites";
 
 function compareRankItems(left: TraderRankItem, right: TraderRankItem, sortBy: RankSortBy) {
   if (sortBy === "maxDrawdown") {
@@ -88,7 +119,7 @@ function parseNumericFilter(value: string) {
 }
 
 function DiscoverPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [selectedPlatforms, setSelectedPlatforms] = useState<TraderPlatform[]>([
     ...SUPPORTED_RANK_PLATFORMS,
   ]);
@@ -104,6 +135,7 @@ function DiscoverPage() {
   const [minWinRateInput, setMinWinRateInput] = useState("");
   const [maxDrawdownInput, setMaxDrawdownInput] = useState("");
   const [selectedTrader, setSelectedTrader] = useState<TraderRankItem | null>(null);
+  const [discoverScope, setDiscoverScope] = useState<DiscoverScope>("all");
 
   const selectedPlatformKey = useMemo(
     () => [...selectedPlatforms].sort().join(","),
@@ -112,13 +144,18 @@ function DiscoverPage() {
   const pageSize = viewMode === "table" ? 20 : 12;
 
   const rankQuery = useQuery({
-    queryKey: ["discover", "rank", selectedPlatformKey, sortBy],
+    queryKey: ["discover", "rank", selectedPlatformKey, sortBy, timeRange],
     queryFn: ({ signal }) =>
       $fetchTraderRankList({
         signal,
-        data: { platforms: selectedPlatforms, sortBy },
+        data: { platforms: selectedPlatforms, sortBy, timeRange },
       }),
     enabled: selectedPlatforms.length > 0,
+  });
+
+  const favoritesQuery = useQuery({
+    queryKey: ["discover", "favorites"],
+    queryFn: ({ signal }) => $listDiscoverFavorites({ signal }),
   });
 
   const minYieldRatio = parseNumericFilter(minYieldRatioInput);
@@ -142,15 +179,31 @@ function DiscoverPage() {
     minWinRateInput,
     maxDrawdownInput,
     viewMode,
+    discoverScope,
   ]);
 
+  const favoriteItems = useMemo(
+    () => mergeFavoriteWithRankItems(favoritesQuery.data ?? [], rankQuery.data?.items ?? []),
+    [favoritesQuery.data, rankQuery.data?.items],
+  );
+
   const filteredItems = useMemo(() => {
-    const items = [...(rankQuery.data?.items ?? [])].sort((left, right) =>
-      compareRankItems(left, right, sortBy),
-    );
+    const items =
+      discoverScope === "favorites"
+        ? [...favoriteItems]
+        : [...(rankQuery.data?.items ?? [])].sort((left, right) =>
+            compareRankItems(left, right, sortBy),
+          );
+
+    if (discoverScope === "favorites") {
+      items.sort((left, right) => compareRankItems(left, right, sortBy));
+    }
+
     const q = search.trim().toLowerCase();
 
     return items.filter((item) => {
+      if (!selectedPlatforms.includes(item.platform)) return false;
+
       if (q) {
         const matchesText =
           item.nickName.toLowerCase().includes(q) ||
@@ -181,8 +234,11 @@ function DiscoverPage() {
     minPnl,
     minWinRate,
     minYieldRatio,
+    discoverScope,
+    favoriteItems,
     rankQuery.data?.items,
     search,
+    selectedPlatforms,
     sortBy,
   ]);
 
@@ -195,6 +251,14 @@ function DiscoverPage() {
     selectedPlatforms.length > 0 &&
     filteredItems.length === 0 &&
     platformErrors.length >= selectedPlatforms.length;
+  const onlyComingSoonSelected =
+    selectedPlatforms.length > 0 && selectedPlatforms.every((platform) => platform === "bybit");
+  const isRankCacheSyncing =
+    discoverScope === "all" &&
+    rankQuery.isSuccess &&
+    (rankQuery.data?.items.length ?? 0) === 0 &&
+    rankQuery.data?.crawledAt == null &&
+    !onlyComingSoonSelected;
 
   const clearExtraFilters = () => {
     setSearch("");
@@ -221,13 +285,14 @@ function DiscoverPage() {
           minFollowersInput={minFollowersInput}
           minWinRateInput={minWinRateInput}
           maxDrawdownInput={maxDrawdownInput}
-          onTogglePlatform={(platform) =>
+          onTogglePlatform={(platform) => {
+            if (PLATFORMS.find((item) => item.value === platform)?.comingSoon) return;
             setSelectedPlatforms((current) =>
               current.includes(platform)
                 ? current.filter((item) => item !== platform)
                 : [...current, platform],
-            )
-          }
+            );
+          }}
           onSelectAllPlatforms={() => setSelectedPlatforms([...SUPPORTED_RANK_PLATFORMS])}
           onClearPlatforms={() => setSelectedPlatforms([])}
           onSortByChange={setSortBy}
@@ -243,19 +308,36 @@ function DiscoverPage() {
           onClearExtraFilters={clearExtraFilters}
         />
 
+        <DiscoverScopeBar
+          scope={discoverScope}
+          favoriteCount={favoritesQuery.data?.length ?? 0}
+          onScopeChange={setDiscoverScope}
+        />
+
+        {!isDiscoverLeaderboardSort(sortBy) ? <SortScopeHint /> : null}
+
         <ResultsSummary
           total={filteredItems.length}
           currentPage={currentPage}
           pageSize={pageSize}
+          timeRange={timeRange}
+          rankCrawledAt={rankQuery.data?.crawledAt ?? null}
+          locale={locale}
         />
 
         {platformErrors.length > 0 ? <PlatformErrorsBanner errors={platformErrors} /> : null}
 
-        {selectedPlatforms.length === 0 ? (
+        {discoverScope === "favorites" && favoritesQuery.isPending ? (
+          <Skeleton className="h-48 rounded-lg" />
+        ) : discoverScope === "favorites" && (favoritesQuery.data?.length ?? 0) === 0 ? (
+          <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
+            {t("discover.noFavorites")}
+          </div>
+        ) : selectedPlatforms.length === 0 ? (
           <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
             {t("discover.selectPlatformFirst")}
           </div>
-        ) : rankQuery.isPending ? (
+        ) : discoverScope === "all" && rankQuery.isPending ? (
           viewMode === "cards" ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {Array.from({ length: 8 }).map((_, index) => (
@@ -269,10 +351,15 @@ function DiscoverPage() {
           <div className="rounded-lg border border-destructive/50 p-8 text-center text-destructive">
             {t("discover.error")}
           </div>
+        ) : onlyComingSoonSelected ? (
+          <EmptyStatePanel title={t("discover.platformComingSoon")} />
+        ) : isRankCacheSyncing ? (
+          <EmptyStatePanel
+            title={t("discover.rankDataSyncing")}
+            hint={t("discover.rankDataSyncingHint")}
+          />
         ) : filteredItems.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
-            {t("discover.noResults")}
-          </div>
+          <EmptyStatePanel title={t("discover.noResults")} />
         ) : (
           <>
             {viewMode === "cards" ? (
@@ -281,12 +368,21 @@ function DiscoverPage() {
                   <TraderCard
                     key={`${item.platform}-${item.traderId}`}
                     item={item}
+                    favorited={isDiscoverFavorite(
+                      favoritesQuery.data ?? [],
+                      item.platform,
+                      item.traderId,
+                    )}
                     onClick={() => setSelectedTrader(item)}
                   />
                 ))}
               </div>
             ) : (
-              <TraderTable items={pagedItems} onRowClick={setSelectedTrader} />
+              <TraderTable
+                items={pagedItems}
+                favorites={favoritesQuery.data ?? []}
+                onRowClick={setSelectedTrader}
+              />
             )}
 
             <Pagination
@@ -300,8 +396,77 @@ function DiscoverPage() {
         )}
       </div>
 
-      <DeepAnalysisSheet trader={selectedTrader} onClose={() => setSelectedTrader(null)} />
+      <DeepAnalysisSheet
+        trader={selectedTrader}
+        favorites={favoritesQuery.data ?? []}
+        timeRange={timeRange}
+        rankCrawledAt={rankQuery.data?.crawledAt ?? null}
+        onClose={() => setSelectedTrader(null)}
+      />
     </TradingPageShell>
+  );
+}
+
+function EmptyStatePanel({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
+      <p>{title}</p>
+      {hint ? <p className="mt-2 text-sm">{hint}</p> : null}
+    </div>
+  );
+}
+
+function SortScopeHint() {
+  const { t } = useI18n();
+
+  return (
+    <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 px-4 py-3 text-sm text-sky-950 dark:text-sky-100">
+      {t("discover.sortScopeLocalHint")}
+    </div>
+  );
+}
+
+function timeRangeLabel(timeRange: RankTimeRange, t: (key: string) => string) {
+  if (timeRange === "7") return t("discover.days7");
+  if (timeRange === "30") return t("discover.days30");
+  return t("discover.days90");
+}
+
+function DiscoverScopeBar(props: {
+  scope: DiscoverScope;
+  favoriteCount: number;
+  onScopeChange: (scope: DiscoverScope) => void;
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="inline-flex rounded-lg border bg-muted/20 p-1">
+        <Button
+          type="button"
+          size="sm"
+          variant={props.scope === "all" ? "default" : "ghost"}
+          className="h-8 rounded-md px-3"
+          onClick={() => props.onScopeChange("all")}
+        >
+          {t("discover.scopeAll")}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={props.scope === "favorites" ? "default" : "ghost"}
+          className="h-8 rounded-md px-3"
+          onClick={() => props.onScopeChange("favorites")}
+        >
+          {t("discover.scopeFavorites")}
+        </Button>
+      </div>
+      {props.favoriteCount > 0 ? (
+        <span className="text-xs text-muted-foreground">
+          {t("discover.favoritesCount", { count: props.favoriteCount })}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -378,9 +543,15 @@ function FilterBar(props: {
                 key={platform.value}
                 variant={props.selectedPlatforms.includes(platform.value) ? "default" : "outline"}
                 size="sm"
+                disabled={platform.comingSoon}
                 onClick={() => props.onTogglePlatform(platform.value)}
               >
                 {platform.label}
+                {platform.comingSoon ? (
+                  <Badge variant="secondary" className="ml-1.5 text-[10px]">
+                    {t("discover.platformComingSoon")}
+                  </Badge>
+                ) : null}
               </Button>
             ))}
           </div>
@@ -402,24 +573,38 @@ function FilterBar(props: {
             value={props.sortBy}
             onChange={(event) => props.onSortByChange(event.target.value as RankSortBy)}
           >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.labelKey)}
-              </option>
-            ))}
+            <optgroup label={t("discover.sortGroupLeaderboard")}>
+              {LEADERBOARD_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.labelKey)}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label={t("discover.sortGroupCollected")}>
+              {LOCAL_SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.labelKey)}
+                </option>
+              ))}
+            </optgroup>
           </select>
 
-          <select
-            className="h-9 rounded-md border bg-background px-3 text-sm"
-            value={props.timeRange}
-            onChange={(event) => props.onTimeRangeChange(event.target.value as RankTimeRange)}
-          >
-            {TIME_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.labelKey)}
-              </option>
-            ))}
-          </select>
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              {t("discover.timeRange")}
+            </span>
+            <select
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+              value={props.timeRange}
+              onChange={(event) => props.onTimeRangeChange(event.target.value as RankTimeRange)}
+            >
+              {TIME_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {t(option.labelKey)}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -531,10 +716,16 @@ function ResultsSummary({
   total,
   currentPage,
   pageSize,
+  timeRange,
+  rankCrawledAt,
+  locale,
 }: {
   total: number;
   currentPage: number;
   pageSize: number;
+  timeRange: RankTimeRange;
+  rankCrawledAt: number | null;
+  locale: "zh-CN" | "en";
 }) {
   const { t } = useI18n();
   if (total === 0) return null;
@@ -543,23 +734,84 @@ function ResultsSummary({
   const end = Math.min(total, currentPage * pageSize);
 
   return (
-    <div className="flex items-center justify-between rounded-xl border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
       <span>{t("discover.resultsCount", { count: total })}</span>
-      <span>{t("discover.resultsRange", { start, end, total })}</span>
+      <div className="flex flex-wrap items-center gap-3">
+        {rankCrawledAt ? (
+          <span>
+            {t("discover.rankDataCachedAt", {
+              range: timeRangeLabel(timeRange, t),
+              time: formatBacktestCompactDateTime(rankCrawledAt, locale),
+            })}
+          </span>
+        ) : null}
+        <span>{t("discover.resultsRange", { start, end, total })}</span>
+      </div>
     </div>
   );
 }
 
+function formatFixed2(value: number): string {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  return `${(value * 100).toFixed(2)}%`;
+  return `${formatFixed2(value * 100)}%`;
 }
 
 function formatUsd(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
-  if (Math.abs(value) >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(value) >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(0)}`;
+  if (Math.abs(value) >= 1_000_000) return `$${formatFixed2(value / 1_000_000)}M`;
+  if (Math.abs(value) >= 1_000) return `$${formatFixed2(value / 1_000)}K`;
+  return `$${formatFixed2(value)}`;
+}
+
+function formatDrawdownRatio(
+  dataValue: number | null | undefined,
+  summaryValue: number | null | undefined,
+): string {
+  for (const value of [dataValue, summaryValue]) {
+    if (value === null || value === undefined) continue;
+    const abs = Math.abs(value);
+    if (abs <= 1) return formatPercent(abs);
+    if (abs <= 100) return formatPercent(abs / 100);
+  }
+  return "—";
+}
+
+function formatMetricValue(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "—";
+
+  const colonRatio = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*:\s*(-?\d+(?:\.\d+)?)$/);
+  if (colonRatio) {
+    return `${formatFixed2(Number(colonRatio[1]))}:${formatFixed2(Number(colonRatio[2]))}`;
+  }
+
+  const slashFraction = trimmed.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+  if (slashFraction) {
+    const left = Number(slashFraction[1]);
+    const right = Number(slashFraction[2]);
+    const formatCount = (value: number) =>
+      Number.isInteger(value) ? String(value) : formatFixed2(value);
+    return `${formatCount(left)}/${formatCount(right)}`;
+  }
+
+  if (trimmed.endsWith("%")) {
+    const parsed = Number(trimmed.slice(0, -1).trim());
+    return Number.isFinite(parsed) ? `${formatFixed2(parsed)}%` : trimmed;
+  }
+
+  const parsed = Number(trimmed);
+  if (Number.isFinite(parsed)) {
+    return Number.isInteger(parsed) ? String(parsed) : formatFixed2(parsed);
+  }
+
+  return trimmed.replace(/-?\d+\.\d+/g, (match) => formatFixed2(Number(match)));
 }
 
 function platformLabel(platform: TraderPlatform) {
@@ -637,7 +889,15 @@ function Sparkline({
   );
 }
 
-function TraderCard({ item, onClick }: { item: TraderRankItem; onClick: () => void }) {
+function TraderCard({
+  item,
+  favorited,
+  onClick,
+}: {
+  item: TraderRankItem;
+  favorited: boolean;
+  onClick: () => void;
+}) {
   const { t } = useI18n();
 
   return (
@@ -664,6 +924,17 @@ function TraderCard({ item, onClick }: { item: TraderRankItem; onClick: () => vo
             {platformLabel(item.platform)} · @{item.uniqueName}
           </div>
         </div>
+        <DiscoverFavoriteButton
+          trader={{
+            platform: item.platform,
+            traderId: item.traderId,
+            uniqueName: item.uniqueName,
+            nickName: item.nickName,
+            avatar: item.avatar,
+            link: item.link,
+          }}
+          favorited={favorited}
+        />
       </div>
 
       {item.sign ? <p className="line-clamp-2 text-xs text-muted-foreground">{item.sign}</p> : null}
@@ -690,9 +961,11 @@ function TraderCard({ item, onClick }: { item: TraderRankItem; onClick: () => vo
 
 function TraderTable({
   items,
+  favorites,
   onRowClick,
 }: {
   items: TraderRankItem[];
+  favorites: DiscoverFavoriteRecord[];
   onRowClick: (item: TraderRankItem) => void;
 }) {
   const { t } = useI18n();
@@ -702,6 +975,7 @@ function TraderTable({
       <table className="min-w-full text-sm">
         <thead className="border-b bg-muted/40 text-left text-xs tracking-wide text-muted-foreground uppercase">
           <tr>
+            <th className="w-10 px-3 py-3" />
             <th className="px-3 py-3">{t("common.name")}</th>
             <th className="px-3 py-3">{t("discover.yieldCurve")}</th>
             <th className="px-3 py-3">{t("discover.yieldRatio")}</th>
@@ -720,6 +994,19 @@ function TraderTable({
               className="cursor-pointer border-b transition last:border-0 hover:bg-muted/30"
               onClick={() => onRowClick(item)}
             >
+              <td className="px-3 py-3">
+                <DiscoverFavoriteButton
+                  trader={{
+                    platform: item.platform,
+                    traderId: item.traderId,
+                    uniqueName: item.uniqueName,
+                    nickName: item.nickName,
+                    avatar: item.avatar,
+                    link: item.link,
+                  }}
+                  favorited={isDiscoverFavorite(favorites, item.platform, item.traderId)}
+                />
+              </td>
               <td className="px-3 py-3">
                 <div className="flex items-center gap-3">
                   {item.avatar ? (
@@ -834,25 +1121,29 @@ function Pagination({
 
 function DeepAnalysisSheet({
   trader,
+  favorites,
+  timeRange,
+  rankCrawledAt,
   onClose,
 }: {
   trader: TraderRankItem | null;
+  favorites: DiscoverFavoriteRecord[];
+  timeRange: RankTimeRange;
+  rankCrawledAt: number | null;
   onClose: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const open = trader !== null;
 
-  const analysisQuery = useQuery({
-    queryKey: ["discover", "deep", trader?.platform, trader?.traderId],
-    queryFn: ({ signal }) =>
-      $fetchTraderDeepAnalysis({
-        signal,
-        data: { platform: trader!.platform, traderId: trader!.traderId },
-      }),
-    enabled: open && trader !== null,
-  });
+  const {
+    query: analysisQuery,
+    isRefreshing,
+    refreshFailed,
+  } = useDiscoverDeepAnalysis(trader?.platform, trader?.traderId, open);
 
-  const data: TraderDeepAnalysis | null = analysisQuery.data ?? null;
+  const response: TraderDeepAnalysisResponse | null = analysisQuery.data ?? null;
+  const data = response?.status === "ready" ? response.analysis : null;
+  const dataCachedAt = response?.status === "ready" ? response.crawledAt : null;
 
   return (
     <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
@@ -878,6 +1169,18 @@ function DeepAnalysisSheet({
                     {platformLabel(trader.platform)} · @{trader.uniqueName}
                   </SheetDescription>
                 </div>
+                <DiscoverFavoriteButton
+                  trader={{
+                    platform: trader.platform,
+                    traderId: trader.traderId,
+                    uniqueName: trader.uniqueName,
+                    nickName: trader.nickName,
+                    avatar: trader.avatar,
+                    link: trader.link,
+                  }}
+                  favorited={isDiscoverFavorite(favorites, trader.platform, trader.traderId)}
+                  size="sm"
+                />
                 <Button
                   variant="ghost"
                   size="sm"
@@ -892,13 +1195,25 @@ function DeepAnalysisSheet({
             </SheetHeader>
 
             <div className="flex flex-col gap-6 px-6 pb-6">
-              {analysisQuery.isPending ? (
+              <DeepDataScopeNote
+                timeRange={timeRange}
+                rankCrawledAt={rankCrawledAt}
+                deepCachedAt={dataCachedAt}
+                locale={locale}
+              />
+
+              {analysisQuery.isPending || isRefreshing ? (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2Icon className="size-4 animate-spin" />
-                  {t("discover.analyzing")}
+                  {isRefreshing ? t("discover.refreshingDeepData") : t("discover.analyzing")}
                 </div>
-              ) : analysisQuery.isError ? (
+              ) : analysisQuery.isError || refreshFailed ? (
                 <div className="text-destructive">{t("discover.error")}</div>
+              ) : response?.status === "pending" ? (
+                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  <p>{t("discover.deepDataPending")}</p>
+                  <p className="mt-2 text-xs">{t("discover.deepDataPendingHint")}</p>
+                </div>
               ) : data ? (
                 <>
                   <div className="flex flex-wrap gap-2">
@@ -935,13 +1250,48 @@ function DeepAnalysisSheet({
   );
 }
 
+function DeepDataScopeNote({
+  timeRange,
+  rankCrawledAt,
+  deepCachedAt,
+  locale,
+}: {
+  timeRange: RankTimeRange;
+  rankCrawledAt: number | null;
+  deepCachedAt: number | null;
+  locale: "zh-CN" | "en";
+}) {
+  const { t } = useI18n();
+
+  return (
+    <div className="rounded-xl border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+      <p>{t("discover.rankMetricsWindow", { range: timeRangeLabel(timeRange, t) })}</p>
+      {rankCrawledAt ? (
+        <p className="mt-1">
+          {t("discover.rankDataCachedAt", {
+            range: timeRangeLabel(timeRange, t),
+            time: formatBacktestCompactDateTime(rankCrawledAt, locale),
+          })}
+        </p>
+      ) : null}
+      {deepCachedAt ? (
+        <p className="mt-1">
+          {t("discover.dataCachedAt", {
+            time: formatBacktestCompactDateTime(deepCachedAt, locale),
+          })}
+        </p>
+      ) : null}
+      <p className="mt-1">{t("discover.deepDataScopeNote")}</p>
+    </div>
+  );
+}
+
 function DeepStats({ data, summary }: { data: TraderDeepAnalysis; summary: TraderRankItem }) {
   const { t } = useI18n();
   const yieldRatio = data.yieldRatio ?? summary.yieldRatio;
   const pnl = data.pnl ?? summary.pnl;
   const aum = data.aum ?? summary.aum;
   const followers = data.followers ?? summary.followers;
-  const maxDrawdown = data.maxDrawdown ?? summary.maxDrawdown;
   const winRate = data.winRate ?? summary.winRate;
 
   return (
@@ -950,7 +1300,10 @@ function DeepStats({ data, summary }: { data: TraderDeepAnalysis; summary: Trade
       <StatCard label={t("discover.pnl")} value={formatUsd(pnl)} />
       <StatCard label={t("discover.aum")} value={formatUsd(aum)} />
       <StatCard label={t("discover.followers")} value={followers?.toString() ?? "—"} />
-      <StatCard label={t("discover.maxDrawdown")} value={formatPercent(maxDrawdown)} />
+      <StatCard
+        label={t("discover.maxDrawdown")}
+        value={formatDrawdownRatio(data.maxDrawdown, summary.maxDrawdown)}
+      />
       <StatCard label={t("discover.winRate")} value={formatPercent(winRate)} />
       <StatCard label={t("discover.balance")} value={formatUsd(data.balance)} />
       <StatCard
@@ -973,7 +1326,12 @@ function StatCard({
   return (
     <div className="rounded-lg border p-3">
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`mt-1 text-sm font-medium ${highlight ? "text-primary" : ""}`}>{value}</div>
+      <div
+        className={`mt-1 truncate text-sm font-medium ${highlight ? "text-primary" : ""}`}
+        title={value}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -1017,7 +1375,9 @@ function MetricGroup({
         {metrics.map((metric) => (
           <div key={`${metric.functionId}-${metric.order}`} className="rounded-lg border p-3">
             <div className="text-xs text-muted-foreground">{metric.title}</div>
-            <div className="mt-1 text-sm font-medium">{metric.value || "—"}</div>
+            <div className="mt-1 truncate text-sm font-medium" title={metric.value}>
+              {formatMetricValue(metric.value)}
+            </div>
             {metric.desc ? (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">{metric.desc}</p>
             ) : null}
@@ -1102,8 +1462,8 @@ function PositionsSection({ data }: { data: TraderDeepAnalysis }) {
                 >
                   {position.positionSide}
                 </td>
-                <td className="py-1 pr-2">{position.amount.toFixed(4)}</td>
-                <td className="py-1 pr-2">{position.entryPrice.toFixed(4)}</td>
+                <td className="py-1 pr-2">{formatFixed2(position.amount)}</td>
+                <td className="py-1 pr-2">{formatFixed2(position.entryPrice)}</td>
                 <td className="py-1 pr-2">{position.leverage}x</td>
                 <td
                   className={`py-1 pr-2 ${(position.pnl ?? 0) >= 0 ? "text-green-500" : "text-red-500"}`}
@@ -1159,9 +1519,9 @@ function HistorySection({ data }: { data: TraderDeepAnalysis }) {
                 >
                   {position.side}
                 </td>
-                <td className="py-1 pr-2">{position.amount.toFixed(4)}</td>
-                <td className="py-1 pr-2">{position.entryPrice.toFixed(4)}</td>
-                <td className="py-1 pr-2">{position.closePrice.toFixed(4)}</td>
+                <td className="py-1 pr-2">{formatFixed2(position.amount)}</td>
+                <td className="py-1 pr-2">{formatFixed2(position.entryPrice)}</td>
+                <td className="py-1 pr-2">{formatFixed2(position.closePrice)}</td>
                 <td
                   className={`py-1 pr-2 ${(position.profit ?? 0) >= 0 ? "text-green-500" : "text-red-500"}`}
                 >

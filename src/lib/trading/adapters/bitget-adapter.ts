@@ -9,7 +9,16 @@ import type {
   TeacherAccountSnapshot,
   TraderLiveSnapshot,
 } from "#/lib/trading/adapters/platform-adapter";
-import { normalizeSwapSymbol, resolveCredentials } from "#/lib/trading/adapters/shared-utils";
+import {
+  mapCcxtPositionsToSnapshots,
+  normalizeSwapSymbol,
+} from "#/lib/trading/adapters/shared-utils";
+import {
+  BACKTEST_WINDOW_30D_MS,
+  BACKTEST_WINDOW_90D_MS,
+  resolveBacktestWindowCutoff,
+} from "#/lib/trading/backtest-window";
+import { createTeacherExchange } from "#/lib/trading/exchange-client";
 import type { TraderPlatformModel } from "#/lib/trading/trader-data-model";
 import type { TraderProfileInference } from "#/lib/trading/trader-profile-inference";
 import type {
@@ -20,6 +29,7 @@ import type {
   TraderRankQuery,
   TraderRankResult,
 } from "#/lib/trading/trader-rank-types";
+import type { ExecutionMode } from "#/lib/trading/types";
 import type {
   CloseFill,
   ExecutionFill,
@@ -30,14 +40,10 @@ import type {
   TraderRecord,
 } from "#/lib/trading/types";
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
-const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1_000;
-
 function resolveHistoryCutoffTime(
   window: FetchTraderDeepAnalysisOptions["historyWindow"],
 ): number | null {
-  if (window === "all") return null;
-  return Date.now() - (window === "30d" ? THIRTY_DAYS_MS : NINETY_DAYS_MS);
+  return resolveBacktestWindowCutoff(window ?? "all");
 }
 
 function finiteOrNull(value: unknown): number | null {
@@ -414,7 +420,7 @@ function deriveThreeMonthMaxDrawdown(cycleData: BitgetCycleData | null): number 
 }
 
 function deriveMonthlyAvgPositionValue(history: BitgetHistoryOrder[]): number | null {
-  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  const cutoff = Date.now() - BACKTEST_WINDOW_30D_MS;
   const notionals = history
     .map((order) => {
       const closeTime = finiteOrNull(order.closeTime);
@@ -626,7 +632,7 @@ async function fetchBitgetDeepAnalysis(
 // ── snapshot ──
 
 async function fetchBitgetSnapshot(trader: TraderRecord): Promise<TraderLiveSnapshot> {
-  const historyCutoffTime = Date.now() - NINETY_DAYS_MS;
+  const historyCutoffTime = Date.now() - BACKTEST_WINDOW_90D_MS;
   const [positions, cycleData, history] = await Promise.all([
     fetchBitgetPositions(trader.id),
     fetchBitgetCycleData(trader.id),
@@ -785,23 +791,17 @@ const BITGET_ENDPOINTS: EndpointDefinition[] = [
 
 async function createBitgetLiveOrder(input: {
   credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
   symbol: string;
   amount: number;
   positionSide: "long" | "short";
   followOrderId: string;
 }): Promise<ExecutionFill> {
-  const { apiKey, apiSecret, apiPassword } = resolveCredentials(input.credentials, "BITGET");
-  if (!apiKey || !apiSecret || !apiPassword) {
-    throw new Error(
-      "Bitget live execution requires teacher credentials or BITGET_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.bitget({
-    apiKey,
-    secret: apiSecret,
-    password: apiPassword,
-    options: { defaultType: "swap" },
-  });
+  const exchange = createTeacherExchange(
+    "bitget",
+    input.credentials,
+    input.executionMode ?? "live",
+  );
   const marketSide = input.positionSide === "long" ? "buy" : "sell";
   const order = await exchange.createMarketOrder(
     normalizeSwapSymbol(input.symbol),
@@ -821,50 +821,33 @@ async function createBitgetLiveOrder(input: {
 
 async function closeBitgetLiveOrder(input: {
   credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
   symbol: string;
   amount: number;
   positionSide: "long" | "short";
   orderId: string;
 }): Promise<CloseFill> {
-  const { apiKey, apiSecret, apiPassword } = resolveCredentials(input.credentials, "BITGET");
-  if (!apiKey || !apiSecret || !apiPassword) {
-    throw new Error(
-      "Bitget live execution requires teacher credentials or BITGET_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.bitget({
-    apiKey,
-    secret: apiSecret,
-    password: apiPassword,
-    options: { defaultType: "swap" },
-  });
-  const response = (await exchange.privateMixPostMixV1TraceCloseTrackOrder({
-    symbol: `${input.symbol}_UMCBL`,
-    trackingNo: input.orderId,
-  })) as { code: string };
-  if (response.code !== "00000") {
-    throw new Error(`Bitget close failed: ${JSON.stringify(response)}`);
-  }
+  const exchange = createTeacherExchange(
+    "bitget",
+    input.credentials,
+    input.executionMode ?? "live",
+  );
+  const marketSide = input.positionSide === "long" ? "sell" : "buy";
+  await exchange.createMarketOrder(normalizeSwapSymbol(input.symbol), marketSide, input.amount);
   return { orderId: input.orderId, closedAmount: input.amount, closeTime: Date.now() };
 }
 
 // ── teacher account ──
 
-async function fetchBitgetTeacherAccount(
-  credentials: TeacherCredentials | null | undefined,
-): Promise<TeacherAccountSnapshot> {
-  const { apiKey, apiSecret, apiPassword } = resolveCredentials(credentials, "BITGET");
-  if (!apiKey || !apiSecret || !apiPassword) {
-    throw new Error(
-      "Bitget teacher account refresh requires teacher credentials or BITGET_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.bitget({
-    apiKey,
-    secret: apiSecret,
-    password: apiPassword,
-    options: { defaultType: "swap" },
-  });
+async function fetchBitgetTeacherAccount(input: {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+}): Promise<TeacherAccountSnapshot> {
+  const exchange = createTeacherExchange(
+    "bitget",
+    input.credentials,
+    input.executionMode ?? "live",
+  );
   const [balance, positions] = await Promise.all([
     exchange.fetchBalance(),
     exchange.fetchPositions(),
@@ -882,7 +865,9 @@ async function fetchBitgetTeacherAccount(
     equity: toNum(usdtInfo?.usdtEquity ?? getUsdt("total")),
     freeUsdt: toNum(usdtInfo?.crossMaxAvailable ?? getUsdt("free")),
     unrealizedPnl: toNum(usdtInfo?.unrealizedPL),
-    teacherPositions: [],
+    teacherPositions: mapCcxtPositionsToSnapshots(
+      positions as unknown as Array<Record<string, unknown>>,
+    ),
   };
 }
 

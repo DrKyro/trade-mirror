@@ -10,11 +10,17 @@ import type {
   CloseFill,
   ExecutionFill,
   PositionSnapshot,
+  ExecutionMode,
   TeacherCredentials,
   TraderBacktestWindow,
   TraderPlatform,
   TraderRecord,
 } from "#/lib/trading/types";
+
+export interface TeacherExchangeContext {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+}
 
 export interface TraderLiveSnapshot {
   positions: PositionSnapshot[];
@@ -59,22 +65,22 @@ export interface PlatformAdapter {
     traderId: string,
     options?: FetchTraderDeepAnalysisOptions,
   ): Promise<TraderDeepAnalysis>;
-  createLiveOrder?(input: {
-    credentials: TeacherCredentials | null | undefined;
-    symbol: string;
-    amount: number;
-    positionSide: "long" | "short";
-    followOrderId: string;
-  }): Promise<ExecutionFill>;
-  closeLiveOrder?(input: {
-    credentials: TeacherCredentials | null | undefined;
-    symbol: string;
-    amount: number;
-    positionSide: "long" | "short";
-    orderId: string;
-  }): Promise<CloseFill>;
-  fetchTeacherAccount?(
-    credentials: TeacherCredentials | null | undefined,
-  ): Promise<TeacherAccountSnapshot>;
+  createLiveOrder?(
+    input: TeacherExchangeContext & {
+      symbol: string;
+      amount: number;
+      positionSide: "long" | "short";
+      followOrderId: string;
+    },
+  ): Promise<ExecutionFill>;
+  closeLiveOrder?(
+    input: TeacherExchangeContext & {
+      symbol: string;
+      amount: number;
+      positionSide: "long" | "short";
+      orderId: string;
+    },
+  ): Promise<CloseFill>;
+  fetchTeacherAccount?(input: TeacherExchangeContext): Promise<TeacherAccountSnapshot>;
   buildTraderLink(traderId: string): string;
 }

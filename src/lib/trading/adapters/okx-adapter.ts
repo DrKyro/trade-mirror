@@ -9,7 +9,16 @@ import type {
   TeacherAccountSnapshot,
   TraderLiveSnapshot,
 } from "#/lib/trading/adapters/platform-adapter";
-import { normalizeSwapSymbol, resolveCredentials } from "#/lib/trading/adapters/shared-utils";
+import {
+  mapCcxtPositionsToSnapshots,
+  normalizeSwapSymbol,
+} from "#/lib/trading/adapters/shared-utils";
+import {
+  BACKTEST_WINDOW_30D_MS,
+  BACKTEST_WINDOW_90D_MS,
+  resolveBacktestWindowCutoff,
+} from "#/lib/trading/backtest-window";
+import { createTeacherExchange } from "#/lib/trading/exchange-client";
 import type { TraderPlatformModel } from "#/lib/trading/trader-data-model";
 import type { TraderProfileInference } from "#/lib/trading/trader-profile-inference";
 import type {
@@ -20,6 +29,8 @@ import type {
   TraderRankQuery,
   TraderRankResult,
 } from "#/lib/trading/trader-rank-types";
+import type { ExecutionMode } from "#/lib/trading/types";
+// ── shared utils ──
 import type {
   CloseFill,
   ExecutionFill,
@@ -30,16 +41,10 @@ import type {
   TraderRecord,
 } from "#/lib/trading/types";
 
-// ── shared utils ──
-
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
-const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1_000;
-
 function resolveHistoryCutoffTime(
   window: FetchTraderDeepAnalysisOptions["historyWindow"],
 ): number | null {
-  if (window === "all") return null;
-  return Date.now() - (window === "30d" ? THIRTY_DAYS_MS : NINETY_DAYS_MS);
+  return resolveBacktestWindowCutoff(window ?? "all");
 }
 
 function normalizeSymbol(instId: string) {
@@ -511,7 +516,7 @@ function deriveThreeMonthMaxDrawdown(points: OkxYieldPnlPoint[]): number | null 
   if (normalized.length === 0) return null;
 
   const latestTime = normalized[normalized.length - 1]!.statTime;
-  const recent = normalized.filter((p) => p.statTime >= latestTime - NINETY_DAYS_MS);
+  const recent = normalized.filter((p) => p.statTime >= latestTime - BACKTEST_WINDOW_90D_MS);
   const series = recent.length > 0 ? recent : normalized;
 
   let peak = series[0]!.equity;
@@ -524,8 +529,45 @@ function deriveThreeMonthMaxDrawdown(points: OkxYieldPnlPoint[]): number | null 
   return maxDrawdown;
 }
 
+function deriveThreeMonthMaxDrawdownRatio(points: OkxYieldPnlPoint[]): number | null {
+  const normalized = points
+    .map((point) => ({
+      statTime: finiteOrNull(point.statTime),
+      equity: deriveEquity(point.pnl, point.ratio),
+    }))
+    .filter(
+      (p): p is { statTime: number; equity: number } => p.statTime !== null && p.equity !== null,
+    )
+    .sort((a, b) => a.statTime - b.statTime);
+
+  if (normalized.length === 0) return null;
+
+  const latestTime = normalized[normalized.length - 1]!.statTime;
+  const recent = normalized.filter((p) => p.statTime >= latestTime - BACKTEST_WINDOW_90D_MS);
+  const series = recent.length > 0 ? recent : normalized;
+
+  let peak = series[0]!.equity;
+  let maxDrawdown = 0;
+  for (const point of series) {
+    if (point.equity > peak) peak = point.equity;
+    const drawdown = point.equity - peak;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  }
+  if (peak <= 0) return null;
+  return Math.abs(maxDrawdown) / peak;
+}
+
+function parseOkxDrawdownRatio(value: string | undefined): number | null {
+  const parsed = finiteOrNull(value);
+  if (parsed === null) return null;
+  const abs = Math.abs(parsed);
+  if (abs <= 1) return abs;
+  if (abs <= 100) return abs / 100;
+  return null;
+}
+
 function deriveMonthlyAvgPositionValue(history: OkxPositionHistoryEntry[]): number | null {
-  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  const cutoff = Date.now() - BACKTEST_WINDOW_30D_MS;
   const notionals = history
     .map((item) => {
       const closeTime = finiteOrNull(item.uTime);
@@ -584,7 +626,7 @@ function mapHistoryPositions(
 // ── snapshot ──
 
 async function fetchOkxSnapshot(trader: TraderRecord): Promise<TraderLiveSnapshot> {
-  const historyCutoffTime = Date.now() - NINETY_DAYS_MS;
+  const historyCutoffTime = Date.now() - BACKTEST_WINDOW_90D_MS;
   const [positions, basicInfo, tradeStat, yieldPnl, history] = await Promise.all([
     fetchOkxPositions(trader.id),
     fetchOkxBasicInfo(trader.id),
@@ -613,73 +655,39 @@ async function fetchOkxSnapshot(trader: TraderRecord): Promise<TraderLiveSnapsho
 // ── rank ──
 
 const OKX_RANK_TYPE_MAP: Record<RankSortBy, string> = {
-  yieldRatio: "roi",
-  pnl: "profit",
+  yieldRatio: "yieldRatio",
+  pnl: "pnl",
   aum: "aum",
   followers: "followers",
-  maxDrawdown: "profit",
-  winRate: "profit",
+  maxDrawdown: "maxDrawdown",
+  winRate: "winRate",
 };
 
-function getDataVersion() {
-  const now = new Date();
-  const yyyy = now.getUTCFullYear();
-  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(now.getUTCDate()).padStart(2, "0");
-  return `${yyyy}${mm}${dd}230000`;
+const OKX_RANK_PAGE_SIZE = 20;
+
+function deriveMaxDrawdownFromRates(rates: Array<{ ratio: string }>): number | null {
+  const values = rates
+    .map((point) => Number(point.ratio) / 100)
+    .filter((value) => Number.isFinite(value));
+  if (values.length < 2) return null;
+
+  let peak = values[0]!;
+  let maxDrawdown = 0;
+  for (const value of values) {
+    if (value > peak) peak = value;
+    const drawdown = value - peak;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  }
+  return Math.abs(maxDrawdown);
 }
 
-async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResult> {
-  const rankType = OKX_RANK_TYPE_MAP[query.sortBy] ?? "profit";
-  const targetCount = query.pageSize;
-  const allEntries: OkxRankEntry[] = [];
-  const seen = new Set<string>();
-  let total = 0;
-  let pages = 0;
-  let prevKey = "";
+function mapOkxRankEntry(entry: OkxRankEntry): TraderRankItem {
+  const yieldCurve = (entry.rates ?? []).map((point) => Number(point.ratio) / 100);
+  const maxDrawdown = entry.maxDrawdown
+    ? Number(entry.maxDrawdown) / 100
+    : deriveMaxDrawdownFromRates(entry.rates ?? []);
 
-  for (let pageNo = query.page; allEntries.length < targetCount; pageNo++) {
-    const params = new URLSearchParams({
-      rankType,
-      pageNo: String(pageNo),
-      pageSize: String(20),
-      latestNum: String(query.timeRange),
-      t: String(Date.now()),
-    });
-
-    const url = `${OKX_BASE}/follow-rank?${params.toString()}`;
-    const dataArr =
-      await fetchOkxData<Array<{ ranks: OkxRankEntry[]; total: string; pages: string }>>(url);
-    const data = dataArr?.[0];
-    const ranks = data?.ranks ?? [];
-
-    if (pageNo === query.page) {
-      total = Number(data?.total ?? 0);
-      pages = Number(data?.pages ?? 0);
-    }
-
-    if (ranks.length === 0) break;
-
-    const pageKey = ranks
-      .map((r) => r.uniqueName)
-      .sort()
-      .join(",");
-    if (pageKey === prevKey) break;
-    prevKey = pageKey;
-
-    for (const entry of ranks) {
-      if (!seen.has(entry.uniqueName)) {
-        seen.add(entry.uniqueName);
-        allEntries.push(entry);
-      }
-    }
-
-    if (pageNo >= pages) break;
-  }
-
-  const list = allEntries.slice(0, targetCount);
-
-  const items: TraderRankItem[] = list.map((entry) => ({
+  return {
     traderId: entry.uniqueName,
     uniqueName: entry.uniqueName,
     nickName: entry.nickName ?? entry.uniqueName,
@@ -690,14 +698,72 @@ async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResul
     pnl: Number(entry.pnl ?? 0),
     aum: Number(entry.aum ?? 0),
     followers: Number(entry.followerNum ?? 0),
-    maxDrawdown: entry.maxDrawdown ? Number(entry.maxDrawdown) / 100 : null,
+    maxDrawdown,
     winRate: entry.winRatio ? Number(entry.winRatio) : null,
     instNum: entry.totalLeadInstNum ? Number(entry.totalLeadInstNum) : null,
     link: `https://www.okx.com/copy-trading/account/${entry.uniqueName}`,
-    yieldCurve: (entry.rates ?? []).map((r) => Number(r.ratio) / 100),
-  }));
+    yieldCurve,
+  };
+}
 
-  return { items, total, platform: "okx" };
+async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResult> {
+  const rankType = OKX_RANK_TYPE_MAP[query.sortBy] ?? "pnl";
+  const targetCount = query.pageSize;
+  const allEntries: OkxRankEntry[] = [];
+  const seen = new Set<string>();
+  let total = 0;
+  let dataVersion: string | undefined;
+  const startPage = Math.max(1, query.page);
+
+  for (let start = startPage; allEntries.length < targetCount; start++) {
+    const params = new URLSearchParams({
+      size: String(OKX_RANK_PAGE_SIZE),
+      type: rankType,
+      start: String(start),
+      latestNum: String(query.timeRange),
+      fullState: "0",
+      countryId: "CN",
+      apiTrader: "0",
+      instNumLimit: "4",
+      t: String(Date.now()),
+    });
+    if (dataVersion) {
+      params.set("dataVersion", dataVersion);
+    }
+
+    const url = `${OKX_BASE}/follow-rank?${params.toString()}`;
+    const dataArr =
+      await fetchOkxData<Array<{ ranks: OkxRankEntry[]; total: string; dataVersion?: string }>>(
+        url,
+      );
+    const data = dataArr?.[0];
+    const ranks = data?.ranks ?? [];
+
+    if (!dataVersion && data?.dataVersion) {
+      dataVersion = data.dataVersion;
+    }
+
+    if (start === startPage) {
+      total = Number(data?.total ?? 0);
+    }
+
+    if (ranks.length === 0) break;
+
+    for (const entry of ranks) {
+      if (!seen.has(entry.uniqueName)) {
+        seen.add(entry.uniqueName);
+        allEntries.push(entry);
+      }
+    }
+  }
+
+  const list = allEntries.slice(0, targetCount);
+
+  return {
+    items: list.map(mapOkxRankEntry),
+    total,
+    platform: "okx",
+  };
 }
 
 // ── profile inference ──
@@ -833,7 +899,8 @@ async function fetchOkxDeepAnalysis(
     followers:
       finiteOrNull(followerMetric?.value.split("/")[0]) ?? finiteOrNull(tradeStat?.followerCount),
     maxDrawdown:
-      finiteOrNull(tradeStat?.maxDrawdown) ?? deriveThreeMonthMaxDrawdown(yieldPnl ?? []),
+      parseOkxDrawdownRatio(tradeStat?.maxDrawdown) ??
+      deriveThreeMonthMaxDrawdownRatio(yieldPnl ?? []),
     winRate: metricValueAsNumber(winRatioMetric) ?? finiteOrNull(tradeStat?.winRate),
     monthlyAveragePositionValue:
       metricValueAsNumber(avgPositionMetric) ?? deriveMonthlyAvgPositionValue(historyArr ?? []),
@@ -855,7 +922,7 @@ const OKX_ENDPOINTS: EndpointDefinition[] = [
     name: "follow-rank (排行榜)",
     method: "GET",
     buildUrl: () =>
-      `${OKX_BASE}/follow-rank?rankType=profit&pageNo=1&pageSize=5&latestNum=90&t=${Date.now()}`,
+      `${OKX_BASE}/follow-rank?size=5&type=pnl&start=1&latestNum=90&fullState=0&countryId=CN&apiTrader=0&instNumLimit=4&t=${Date.now()}`,
     extractCount: (data) => {
       if (Array.isArray(data) && data[0]?.ranks) return data[0].ranks.length;
       return null;
@@ -958,23 +1025,13 @@ const OKX_ENDPOINTS: EndpointDefinition[] = [
 
 async function createOkxLiveOrder(input: {
   credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
   symbol: string;
   amount: number;
   positionSide: "long" | "short";
   followOrderId: string;
 }): Promise<ExecutionFill> {
-  const { apiKey, apiSecret, apiPassword } = resolveCredentials(input.credentials, "OKX");
-  if (!apiKey || !apiSecret || !apiPassword) {
-    throw new Error(
-      "OKX live execution requires teacher credentials or OKX_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.okx({
-    apiKey,
-    secret: apiSecret,
-    password: apiPassword,
-    options: { defaultType: "swap" },
-  });
+  const exchange = createTeacherExchange("okx", input.credentials, input.executionMode ?? "live");
   const side = input.positionSide === "long" ? "buy" : "sell";
   const order = await exchange.createMarketOrder(
     normalizeSwapSymbol(input.symbol),
@@ -994,23 +1051,13 @@ async function createOkxLiveOrder(input: {
 
 async function closeOkxLiveOrder(input: {
   credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
   symbol: string;
   amount: number;
   positionSide: "long" | "short";
   orderId: string;
 }): Promise<CloseFill> {
-  const { apiKey, apiSecret, apiPassword } = resolveCredentials(input.credentials, "OKX");
-  if (!apiKey || !apiSecret || !apiPassword) {
-    throw new Error(
-      "OKX live execution requires teacher credentials or OKX_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.okx({
-    apiKey,
-    secret: apiSecret,
-    password: apiPassword,
-    options: { defaultType: "swap" },
-  });
+  const exchange = createTeacherExchange("okx", input.credentials, input.executionMode ?? "live");
   const side = input.positionSide === "long" ? "sell" : "buy";
   await exchange.createMarketOrder(normalizeSwapSymbol(input.symbol), side, input.amount);
   return { orderId: input.orderId, closedAmount: input.amount, closeTime: Date.now() };
@@ -1018,21 +1065,11 @@ async function closeOkxLiveOrder(input: {
 
 // ── teacher account ──
 
-async function fetchOkxTeacherAccount(
-  credentials: TeacherCredentials | null | undefined,
-): Promise<TeacherAccountSnapshot> {
-  const { apiKey, apiSecret, apiPassword } = resolveCredentials(credentials, "OKX");
-  if (!apiKey || !apiSecret || !apiPassword) {
-    throw new Error(
-      "OKX teacher account refresh requires teacher credentials or OKX_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.okx({
-    apiKey,
-    secret: apiSecret,
-    password: apiPassword,
-    options: { defaultType: "swap" },
-  });
+async function fetchOkxTeacherAccount(input: {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+}): Promise<TeacherAccountSnapshot> {
+  const exchange = createTeacherExchange("okx", input.credentials, input.executionMode ?? "live");
   const [balance, positions] = await Promise.all([
     exchange.fetchBalance(),
     exchange.fetchPositions(),
@@ -1053,7 +1090,9 @@ async function fetchOkxTeacherAccount(
     equity: toNum(usdtDetails?.eq ?? getUsdt("total")),
     freeUsdt: getUsdt("free"),
     unrealizedPnl: toNum(usdtDetails?.upl),
-    teacherPositions: [],
+    teacherPositions: mapCcxtPositionsToSnapshots(
+      positions as unknown as Array<Record<string, unknown>>,
+    ),
   };
 }
 

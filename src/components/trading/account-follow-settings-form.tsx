@@ -19,26 +19,43 @@ const DEFAULT_SETTINGS = {
   followProfit: 0,
 };
 
-export function TeacherFollowSettingsForm(props: {
-  teacher: TeacherRecord;
+export function AccountFollowSettingsForm(props: {
+  account: TeacherRecord;
   traders: TraderRecord[];
+  preferredTraderId?: string;
   onSubmitted?: () => void;
 }) {
   const { t } = useI18n();
-  const [selectedTraderId, setSelectedTraderId] = useState(
-    props.traders.find(
-      (trader) => !props.teacher.traceTraderList.some((item) => item.id === trader.id),
-    )?.id ?? "",
-  );
+  const [selectedTraderId, setSelectedTraderId] = useState(() => {
+    if (
+      props.preferredTraderId &&
+      props.traders.some((trader) => trader.id === props.preferredTraderId) &&
+      !props.account.traceTraderList.some((item) => item.id === props.preferredTraderId)
+    ) {
+      return props.preferredTraderId;
+    }
+
+    return (
+      props.traders.find(
+        (trader) => !props.account.traceTraderList.some((item) => item.id === trader.id),
+      )?.id ?? ""
+    );
+  });
   const [pending, setPending] = useState(false);
 
   const availableTraders = props.traders.filter(
-    (trader) => !props.teacher.traceTraderList.some((item) => item.id === trader.id),
+    (trader) => !props.account.traceTraderList.some((item) => item.id === trader.id),
+  );
+
+  const highlight = Boolean(
+    props.preferredTraderId &&
+    selectedTraderId === props.preferredTraderId &&
+    availableTraders.some((trader) => trader.id === props.preferredTraderId),
   );
 
   return (
     <form
-      className="rounded-2xl border bg-muted/20 p-4"
+      className={`rounded-2xl border bg-muted/20 p-4 ${highlight ? "ring-2 ring-primary/40" : ""}`}
       onSubmit={async (event) => {
         event.preventDefault();
         if (!selectedTraderId) {
@@ -51,7 +68,7 @@ export function TeacherFollowSettingsForm(props: {
         }
 
         const nextTraceTraderList: TraceTraderSetting[] = [
-          ...props.teacher.traceTraderList,
+          ...props.account.traceTraderList,
           {
             id: trader.id,
             name: trader.name,
@@ -63,7 +80,7 @@ export function TeacherFollowSettingsForm(props: {
         try {
           await $updateTeacherTraceTraders({
             data: {
-              teacherId: props.teacher.id,
+              teacherId: props.account.id,
               traceTraderList: nextTraceTraderList,
             },
           });
@@ -76,11 +93,11 @@ export function TeacherFollowSettingsForm(props: {
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-end">
         <div className="grid flex-1 gap-2">
-          <Label htmlFor={`follow-trader-${props.teacher.id}`}>
+          <Label htmlFor={`follow-trader-${props.account.id}`}>
             {t("form.addStrategyToFollow")}
           </Label>
           <select
-            id={`follow-trader-${props.teacher.id}`}
+            id={`follow-trader-${props.account.id}`}
             className="h-8 rounded-2xl border bg-background px-3 text-sm"
             value={selectedTraderId}
             onChange={(event) => setSelectedTraderId(event.target.value)}
@@ -107,7 +124,7 @@ export function TeacherFollowSettingsForm(props: {
 }
 
 export function TraceTraderEditor(props: {
-  teacher: TeacherRecord;
+  account: TeacherRecord;
   setting: TraceTraderSetting;
   onSubmitted?: () => void;
 }) {
@@ -128,7 +145,7 @@ export function TraceTraderEditor(props: {
       className="mt-4 grid gap-3 rounded-xl border bg-background p-4"
       onSubmit={async (event) => {
         event.preventDefault();
-        const nextTraceTraderList = props.teacher.traceTraderList.map((item) =>
+        const nextTraceTraderList = props.account.traceTraderList.map((item) =>
           item.id === props.setting.id
             ? {
                 ...item,
@@ -147,7 +164,7 @@ export function TraceTraderEditor(props: {
         try {
           await $updateTeacherTraceTraders({
             data: {
-              teacherId: props.teacher.id,
+              teacherId: props.account.id,
               traceTraderList: nextTraceTraderList,
             },
           });
@@ -164,11 +181,11 @@ export function TraceTraderEditor(props: {
           onChange={(value) => setForm((current) => ({ ...current, funds: value }))}
         />
         <div className="grid gap-2">
-          <Label htmlFor={`trace-mode-${props.teacher.id}-${props.setting.id}`}>
+          <Label htmlFor={`trace-mode-${props.account.id}-${props.setting.id}`}>
             {t("form.orderMode")}
           </Label>
           <select
-            id={`trace-mode-${props.teacher.id}-${props.setting.id}`}
+            id={`trace-mode-${props.account.id}-${props.setting.id}`}
             className="h-8 rounded-2xl border bg-background px-3 text-sm"
             value={form.traceOrderMode}
             onChange={(event) =>
@@ -205,11 +222,11 @@ export function TraceTraderEditor(props: {
           }
         />
         <div className="grid gap-2">
-          <Label htmlFor={`follow-status-${props.teacher.id}-${props.setting.id}`}>
+          <Label htmlFor={`follow-status-${props.account.id}-${props.setting.id}`}>
             {t("form.followStatus")}
           </Label>
           <select
-            id={`follow-status-${props.teacher.id}-${props.setting.id}`}
+            id={`follow-status-${props.account.id}-${props.setting.id}`}
             className="h-8 rounded-2xl border bg-background px-3 text-sm"
             value={form.followStatus}
             onChange={(event) =>

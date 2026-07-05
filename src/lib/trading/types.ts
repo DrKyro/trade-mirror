@@ -210,7 +210,7 @@ export interface TeacherCredentials {
   apiPassword?: string | null;
 }
 
-export type ExecutionMode = "dry-run" | "live";
+export type ExecutionMode = "dry-run" | "demo" | "live";
 
 export type RefreshSchedulerPlatform = "okx" | "bitget" | "binanceFutures" | "bybit";
 
@@ -316,11 +316,24 @@ export interface DiscoverCrawlerRuntimeState {
   lastCompletedAt: number | null;
   lastError: string | null;
   intervalMs: number;
+  rankCache?: {
+    totalCached: number;
+    lastCrawledAt: number | null;
+    perPlatform: Record<string, number>;
+  };
+  deepCache?: {
+    totalCached: number;
+    lastCrawledAt: number | null;
+    perPlatform: Record<string, number>;
+  };
   lastResultSummary?: {
     totalFetched: number;
     uniqueTraders: number;
     perPlatform: Record<string, number>;
     errorCount: number;
+    deepAttempted: number;
+    deepSucceeded: number;
+    deepFailed: number;
   } | null;
 }
 

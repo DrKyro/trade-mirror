@@ -10,7 +10,13 @@ import {
   legacyUserAccountSettingQueryOptions,
 } from "#/lib/messages/queries";
 import {
+  $runDiscoverCrawlerOnce,
+  $startDiscoverCrawler,
+  $stopDiscoverCrawler,
+} from "#/lib/trading/discover-repository";
+import {
   bybitRuntimeStatusQueryOptions,
+  discoverDataStatusQueryOptions,
   marketSubscriptionsQueryOptions,
   notificationConfigQueryOptions,
   refreshSchedulerQueryOptions,
@@ -36,6 +42,7 @@ export const Route = createFileRoute("/_auth/app/system")({
       bybitRuntimeStatus,
       legacyCounts,
       legacyAccountSetting,
+      discoverDataStatus,
     ] = await Promise.all([
       context.queryClient.ensureQueryData(runtimeStatusQueryOptions()),
       context.queryClient.ensureQueryData(runtimeEventsQueryOptions()),
@@ -45,6 +52,7 @@ export const Route = createFileRoute("/_auth/app/system")({
       context.queryClient.ensureQueryData(bybitRuntimeStatusQueryOptions()),
       context.queryClient.ensureQueryData(legacyCountsQueryOptions()),
       context.queryClient.ensureQueryData(legacyUserAccountSettingQueryOptions()),
+      context.queryClient.ensureQueryData(discoverDataStatusQueryOptions()),
     ]);
     return {
       runtimeStatus,
@@ -55,6 +63,7 @@ export const Route = createFileRoute("/_auth/app/system")({
       bybitRuntimeStatus,
       legacyCounts,
       legacyAccountSetting,
+      discoverDataStatus,
     };
   },
   component: SystemPage,
@@ -70,6 +79,7 @@ function SystemPage() {
     bybitRuntimeStatus,
     legacyCounts,
     legacyAccountSetting,
+    discoverDataStatus,
   } = Route.useLoaderData();
   const router = useRouter();
   const { t } = useI18n();
@@ -404,6 +414,102 @@ function SystemPage() {
       </div>
 
       <div className="rounded-2xl border bg-card p-6 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">{text.discoverCrawler}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{text.discoverCrawlerDescription}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                await $runDiscoverCrawlerOnce();
+                toast.success(text.discoverCrawlerRunOnceDone);
+                await router.invalidate();
+              }}
+            >
+              {text.discoverCrawlerRunOnce}
+            </Button>
+            <Button
+              size="sm"
+              onClick={async () => {
+                await $startDiscoverCrawler();
+                await router.invalidate();
+              }}
+              disabled={discoverDataStatus.crawler.running}
+            >
+              {text.startScheduler}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                await $stopDiscoverCrawler();
+                await router.invalidate();
+              }}
+              disabled={!discoverDataStatus.crawler.running}
+            >
+              {text.stopScheduler}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatusTile
+            label={text.schedulerStatus}
+            ok={discoverDataStatus.crawler.running}
+            value={discoverDataStatus.crawler.running ? text.running : text.stopped}
+          />
+          <StatusTile
+            label={text.discoverRankCache}
+            ok={discoverDataStatus.rankCache.totalCached > 0}
+            value={String(discoverDataStatus.rankCache.totalCached)}
+          />
+          <StatusTile
+            label={text.discoverDeepCache}
+            ok={discoverDataStatus.deepCache.totalCached > 0}
+            value={String(discoverDataStatus.deepCache.totalCached)}
+          />
+          <StatusTile
+            label={text.pollInterval}
+            ok
+            value={`${Math.round(discoverDataStatus.crawler.intervalMs / 60_000)}m`}
+          />
+        </div>
+
+        <dl className="mt-4 grid gap-4 md:grid-cols-2">
+          <KeyValue label={text.lastCompleted}>
+            {discoverDataStatus.crawler.lastCompletedAt
+              ? new Date(discoverDataStatus.crawler.lastCompletedAt).toLocaleString()
+              : text.notYet}
+          </KeyValue>
+          <KeyValue label={text.discoverRankCachedAt}>
+            {discoverDataStatus.rankCache.lastCrawledAt
+              ? new Date(discoverDataStatus.rankCache.lastCrawledAt).toLocaleString()
+              : text.notYet}
+          </KeyValue>
+          <KeyValue label={text.discoverDeepCachedAt}>
+            {discoverDataStatus.deepCache.lastCrawledAt
+              ? new Date(discoverDataStatus.deepCache.lastCrawledAt).toLocaleString()
+              : text.notYet}
+          </KeyValue>
+          <KeyValue label={text.lastError}>
+            {discoverDataStatus.crawler.lastError ?? text.none}
+          </KeyValue>
+          {discoverDataStatus.crawler.lastResultSummary ? (
+            <KeyValue label={text.discoverLastRun}>
+              {text.discoverLastRunSummary(
+                discoverDataStatus.crawler.lastResultSummary.uniqueTraders,
+                discoverDataStatus.crawler.lastResultSummary.deepSucceeded,
+                discoverDataStatus.crawler.lastResultSummary.deepAttempted,
+              )}
+            </KeyValue>
+          ) : null}
+        </dl>
+      </div>
+
+      <div className="rounded-2xl border bg-card p-6 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="text-lg font-semibold">{text.marketSubscriptionState}</h2>
@@ -666,6 +772,23 @@ function useSystemText() {
     activePlatforms: isZh ? "活跃平台" : "Active platforms",
     lastStarted: isZh ? "上次启动时间" : "Last started",
     lastError: isZh ? "最后错误" : "Last error",
+    discoverCrawler: isZh ? "发现页爬虫" : "Discover crawler",
+    discoverCrawlerDescription: isZh
+      ? "按固定周期抓取排行榜和交易员深度数据，写入数据库。发现页和详情页只读缓存，不直接请求交易所。"
+      : "Periodically crawls rank lists and trader deep analysis into the database. Discover pages read cache only and do not call exchanges directly.",
+    discoverCrawlerRunOnce: isZh ? "立即爬取一轮" : "Run once now",
+    discoverCrawlerRunOnceDone: isZh
+      ? "发现爬虫已执行一轮。"
+      : "Discover crawler finished one run.",
+    discoverRankCache: isZh ? "排行榜缓存" : "Rank cache rows",
+    discoverDeepCache: isZh ? "深度缓存" : "Deep cache rows",
+    discoverRankCachedAt: isZh ? "排行榜更新时间" : "Rank cache updated",
+    discoverDeepCachedAt: isZh ? "深度数据更新时间" : "Deep cache updated",
+    discoverLastRun: isZh ? "上一轮结果" : "Last run",
+    discoverLastRunSummary: (rankRows: number, deepOk: number, deepTotal: number) =>
+      isZh
+        ? `排行榜 ${rankRows} 人，深度 ${deepOk}/${deepTotal}`
+        : `${rankRows} rank rows, deep ${deepOk}/${deepTotal}`,
     marketSubscriptionState: isZh ? "行情订阅状态" : "Market subscription state",
     marketSubscriptionStateDescription: isZh
       ? "这里根据交易员的实时跟单关系推导出当前行情订阅视图，用来替代旧版 `marketChild/subMarketTicker` 的运行态展示。"

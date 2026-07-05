@@ -199,7 +199,7 @@ const addTeacherSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   platform: z.enum(["okx", "bitget", "bybit", "binanceFutures"]),
-  executionMode: z.enum(["dry-run", "live"]).default("dry-run"),
+  executionMode: z.enum(["dry-run", "demo", "live"]).default("dry-run"),
   credentials: z
     .object({
       apiKey: z.string().min(1),
@@ -223,9 +223,29 @@ export const $addTeacher = createServerFn({
     return runtime.getTeachersForUser(context.user.id);
   });
 
+const probeTeacherAccountSchema = z.object({
+  platform: z.enum(["okx", "bitget", "bybit", "binanceFutures"]),
+  executionMode: z.enum(["dry-run", "demo", "live"]).default("demo"),
+  credentials: z.object({
+    apiKey: z.string().min(1),
+    apiSecret: z.string().min(1),
+    apiPassword: z.string().optional(),
+  }),
+});
+
+export const $probeTeacherAccount = createServerFn({
+  method: "POST",
+})
+  .middleware([freshAuthMiddleware])
+  .validator(probeTeacherAccountSchema)
+  .handler(async ({ data }) => {
+    const { probeTeacherAccount } = await import("#/lib/trading/teacher-account-adapters");
+    return probeTeacherAccount(data);
+  });
+
 const updateTeacherExecutionSchema = z.object({
   teacherId: z.string().min(1),
-  executionMode: z.enum(["dry-run", "live"]).optional(),
+  executionMode: z.enum(["dry-run", "demo", "live"]).optional(),
   credentials: z
     .object({
       apiKey: z.string().min(1),

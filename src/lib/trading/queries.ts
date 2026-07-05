@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 
+import { $getDiscoverDataStatus } from "#/lib/trading/discover-repository";
 import {
   $getAllTraders,
   $getBybitRuntimeStatus,
@@ -26,11 +27,14 @@ export const allTradersQueryOptions = () =>
     queryFn: ({ signal }) => $getAllTraders({ signal }),
   });
 
-export const teachersQueryOptions = () =>
+export const accountsQueryOptions = () =>
   queryOptions({
-    queryKey: ["trading", "teachers"],
+    queryKey: ["trading", "accounts"],
     queryFn: ({ signal }) => $getTeachers({ signal }),
   });
+
+/** @deprecated Use accountsQueryOptions */
+export const teachersQueryOptions = accountsQueryOptions;
 
 export const runtimeStatusQueryOptions = () =>
   queryOptions({
@@ -68,20 +72,29 @@ export const bybitRuntimeStatusQueryOptions = () =>
     queryFn: ({ signal }) => $getBybitRuntimeStatus({ signal }),
   });
 
-export const teacherEventsQueryOptions = (teacherId: string) =>
+export const accountEventsQueryOptions = (accountId: string) =>
   queryOptions({
-    queryKey: ["trading", "teacher-events", teacherId],
+    queryKey: ["trading", "account-events", accountId],
     queryFn: ({ signal }) =>
       $getTeacherEvents({
         signal,
         data: {
-          teacherId,
+          teacherId: accountId,
         },
       }),
   });
+
+/** @deprecated Use accountEventsQueryOptions */
+export const teacherEventsQueryOptions = accountEventsQueryOptions;
 
 export const apiHealthQueryOptions = () =>
   queryOptions({
     queryKey: ["trading", "api-health"],
     queryFn: ({ signal }) => $probeApiHealth({ signal }),
+  });
+
+export const discoverDataStatusQueryOptions = () =>
+  queryOptions({
+    queryKey: ["discover", "data-status"],
+    queryFn: ({ signal }) => $getDiscoverDataStatus({ signal }),
   });

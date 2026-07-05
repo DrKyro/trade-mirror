@@ -1,24 +1,45 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ExternalLinkIcon, Loader2Icon } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import {
+  BacktestBarChart,
+  BacktestLineChart,
+  downsampleChartPoints,
+} from "#/components/trading/backtest-charts";
+import { DiscoverFavoriteButton } from "#/components/trading/discover-favorite-button";
 import { TradingPageShell } from "#/components/trading/page-shell";
+import { useDiscoverDeepAnalysis } from "#/components/trading/use-discover-deep-analysis";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Skeleton } from "#/components/ui/skeleton";
-import { useI18n } from "#/lib/i18n";
+import { useI18n, type AppLocale } from "#/lib/i18n";
 import {
   buildTraderBacktestAnalytics,
   formatDurationLabel,
 } from "#/lib/trading/backtest-analytics";
 import {
-  $fetchTraderDeepAnalysis,
+  formatBacktestCompactDateTime,
+  formatBacktestDateWithWeekday,
+  formatBacktestTimeOnly,
+} from "#/lib/trading/backtest-time-format";
+import {
+  formatBacktestWindowRangeLabel,
+  summarizeBacktestWindow,
+  type BacktestWindowPreview,
+} from "#/lib/trading/discover-backtests";
+import { isDiscoverFavorite } from "#/lib/trading/discover-favorites";
+import {
+  $listDiscoverFavorites,
   $listTraderBacktests,
   $runTraderBacktest,
 } from "#/lib/trading/discover-repository";
-import type { TraderDeepAnalysis } from "#/lib/trading/trader-rank-types";
+import type {
+  TraderDeepAnalysis,
+  TraderDeepAnalysisResponse,
+} from "#/lib/trading/trader-rank-types";
 import type {
   TraderBacktestMode,
   TraderBacktestRunRecord,
@@ -49,7 +70,7 @@ const PLATFORMS: { value: TraderPlatform; label: string }[] = [
 ];
 
 function TraderBacktestPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const queryClient = useQueryClient();
   const params = Route.useParams();
   const platform = params.platform as TraderPlatform;
@@ -58,15 +79,12 @@ function TraderBacktestPage() {
   const [window, setWindow] = useState<TraderBacktestWindow>("90d");
   const [initialBalanceInput, setInitialBalanceInput] = useState("1000");
   const [latestBacktest, setLatestBacktest] = useState<TraderBacktestRunRecord | null>(null);
+  const [runProgress, setRunProgress] = useState<number | null>(null);
+  const [runProgressLabel, setRunProgressLabel] = useState("");
+  const runProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const runProgressResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const analysisQuery = useQuery({
-    queryKey: ["discover", "deep", platform, traderId, window],
-    queryFn: ({ signal }) =>
-      $fetchTraderDeepAnalysis({
-        signal,
-        data: { platform, traderId, window },
-      }),
-  });
+  const { query: analysisQuery, isRefreshing } = useDiscoverDeepAnalysis(platform, traderId, true);
 
   const backtestsQuery = useQuery({
     queryKey: ["discover", "backtests", platform, traderId],
@@ -77,10 +95,28 @@ function TraderBacktestPage() {
       }),
   });
 
+  const favoritesQuery = useQuery({
+    queryKey: ["discover", "favorites"],
+    queryFn: ({ signal }) => $listDiscoverFavorites({ signal }),
+  });
+
+  const clearRunProgressTimers = () => {
+    if (runProgressTimerRef.current) {
+      clearInterval(runProgressTimerRef.current);
+      runProgressTimerRef.current = null;
+    }
+    if (runProgressResetTimerRef.current) {
+      clearTimeout(runProgressResetTimerRef.current);
+      runProgressResetTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearRunProgressTimers(), []);
+
   const runBacktestMutation = useMutation({
     mutationFn: async () => {
-      const data = analysisQuery.data;
-      if (!data) {
+      const response = analysisQuery.data;
+      if (!response || response.status !== "ready") {
         throw new Error("Deep analysis is not ready");
       }
 
@@ -88,35 +124,76 @@ function TraderBacktestPage() {
         data: {
           platform,
           traderId,
-          uniqueName: data.uniqueName,
-          nickName: data.nickName,
+          uniqueName: response.analysis.uniqueName,
+          nickName: response.analysis.nickName,
           mode,
           window,
-          initialBalance: Number(initialBalanceInput),
+          initialBalance: parseInitialBalance(initialBalanceInput),
+          historyPositions: response.analysis.historyPositions,
         },
       });
     },
+    onMutate: () => {
+      clearRunProgressTimers();
+      setRunProgress(8);
+      setRunProgressLabel(t("discover.backtestProgressPrepare"));
+      toast.loading(t("discover.backtestProgressPrepare"), { id: "backtest-run" });
+
+      runProgressTimerRef.current = setInterval(() => {
+        setRunProgress((current) => {
+          if (current === null || current >= 92) return current;
+
+          const next = Math.min(current + 4 + Math.random() * 5, 92);
+          if (next >= 72) {
+            setRunProgressLabel(t("discover.backtestProgressSave"));
+          } else if (next >= 38) {
+            setRunProgressLabel(t("discover.backtestProgressCompute"));
+          }
+          return next;
+        });
+      }, 350);
+    },
     onSuccess: async (run) => {
+      clearRunProgressTimers();
+      setRunProgress(100);
+      setRunProgressLabel(t("discover.backtestProgressDone"));
       setLatestBacktest(run);
-      toast.success(t("discover.backtestSaved"));
+      toast.success(t("discover.backtestSaved"), { id: "backtest-run" });
       await queryClient.invalidateQueries({
         queryKey: ["discover", "backtests", platform, traderId],
       });
+      runProgressResetTimerRef.current = setTimeout(() => {
+        setRunProgress(null);
+        setRunProgressLabel("");
+      }, 900);
     },
-    onError: () => {
-      toast.error(t("discover.backtestFailed"));
+    onError: (error) => {
+      clearRunProgressTimers();
+      setRunProgress(null);
+      setRunProgressLabel("");
+      const message = error instanceof Error ? error.message : t("discover.backtestFailed");
+      toast.error(message, { id: "backtest-run" });
     },
   });
 
-  const data = analysisQuery.data ?? null;
+  const analysisResponse: TraderDeepAnalysisResponse | null = analysisQuery.data ?? null;
+  const data = analysisResponse?.status === "ready" ? analysisResponse.analysis : null;
+  const dataCachedAt = analysisResponse?.status === "ready" ? analysisResponse.crawledAt : null;
   const savedRuns = backtestsQuery.data ?? [];
   const currentBacktest = latestBacktest ?? savedRuns[0] ?? null;
-  const initialBalance = Number(initialBalanceInput);
+  const initialBalance = parseInitialBalance(initialBalanceInput);
+  const windowPreview = useMemo(
+    () => (data ? summarizeBacktestWindow(data.historyPositions, window) : null),
+    [data, window],
+  );
+  const tradeablePositionCount = windowPreview?.tradeableCount ?? 0;
   const canRunBacktest =
     data !== null &&
-    data.historyPositions.length > 0 &&
+    tradeablePositionCount > 0 &&
     Number.isFinite(initialBalance) &&
     initialBalance > 0;
+  const isAnalysisLoading = (analysisQuery.isPending && analysisResponse === null) || isRefreshing;
+  const isAnalysisPending = analysisResponse?.status === "pending" && !isRefreshing;
 
   const pageTitle = data?.nickName
     ? `${data.nickName} · ${t("discover.backtestTitle")}`
@@ -140,21 +217,40 @@ function TraderBacktestPage() {
         </Button>
       }
     >
-      {analysisQuery.isPending ? (
+      {isAnalysisLoading ? (
         <div className="space-y-4">
           <Skeleton className="h-32 rounded-2xl" />
           <Skeleton className="h-80 rounded-2xl" />
         </div>
-      ) : analysisQuery.isError || !data ? (
+      ) : analysisQuery.isError ? (
         <div className="rounded-lg border border-destructive/50 p-8 text-center text-destructive">
           {t("discover.error")}
         </div>
+      ) : isAnalysisPending || !data ? (
+        <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
+          <p>{t("discover.deepDataPending")}</p>
+          <p className="mt-2 text-sm">{t("discover.deepDataPendingHint")}</p>
+        </div>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[1.1fr_1.5fr]">
-          <div className="space-y-6">
-            <TraderOverviewCard data={data} />
+        <div className="space-y-6">
+          <div className="rounded-xl border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+            {dataCachedAt ? (
+              <p>
+                {t("discover.dataCachedAt", {
+                  time: formatBacktestCompactDateTime(dataCachedAt, locale),
+                })}
+              </p>
+            ) : null}
+            <p className={dataCachedAt ? "mt-1" : undefined}>{t("discover.deepDataScopeNote")}</p>
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <TraderOverviewCard
+              data={data}
+              favorites={favoritesQuery.data ?? []}
+              dataCachedAt={dataCachedAt}
+              locale={locale}
+            />
             <SummaryStats data={data} />
-            <HistoryPreview data={data} />
           </div>
 
           <BacktestWorkspace
@@ -167,19 +263,38 @@ function TraderBacktestPage() {
             currentBacktest={currentBacktest}
             isRunning={runBacktestMutation.isPending}
             canRun={canRunBacktest}
+            windowPreview={windowPreview}
+            tradeablePositionCount={tradeablePositionCount}
+            runProgress={runProgress}
+            runProgressLabel={runProgressLabel}
             onModeChange={setMode}
             onWindowChange={setWindow}
             onInitialBalanceChange={setInitialBalanceInput}
-            onRun={() => runBacktestMutation.mutate()}
+            onRun={() => {
+              if (!canRunBacktest || runBacktestMutation.isPending) return;
+              runBacktestMutation.mutate();
+            }}
             onSelectRun={setLatestBacktest}
           />
+
+          <HistoryPreview data={data} />
         </div>
       )}
     </TradingPageShell>
   );
 }
 
-function TraderOverviewCard({ data }: { data: TraderDeepAnalysis }) {
+function TraderOverviewCard({
+  data,
+  favorites,
+  dataCachedAt,
+  locale,
+}: {
+  data: TraderDeepAnalysis;
+  favorites: Array<{ platform: TraderPlatform; traderId: string }>;
+  dataCachedAt: number | null;
+  locale: "zh-CN" | "en";
+}) {
   const { t } = useI18n();
 
   return (
@@ -202,7 +317,26 @@ function TraderOverviewCard({ data }: { data: TraderDeepAnalysis }) {
             {platformLabel(data.platform)} · @{data.uniqueName}
           </div>
           {data.sign ? <p className="mt-2 text-sm text-muted-foreground">{data.sign}</p> : null}
+          {dataCachedAt ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t("discover.dataCachedAt", {
+                time: formatBacktestCompactDateTime(dataCachedAt, locale),
+              })}
+            </p>
+          ) : null}
         </div>
+        <DiscoverFavoriteButton
+          trader={{
+            platform: data.platform,
+            traderId: data.traderId,
+            uniqueName: data.uniqueName,
+            nickName: data.nickName,
+            avatar: data.avatar,
+            link: data.link,
+          }}
+          favorited={isDiscoverFavorite(favorites, data.platform, data.traderId)}
+          size="sm"
+        />
         <Button
           variant="ghost"
           size="sm"
@@ -227,51 +361,73 @@ function BacktestWorkspace(props: {
   currentBacktest: TraderBacktestRunRecord | null;
   isRunning: boolean;
   canRun: boolean;
+  windowPreview: BacktestWindowPreview | null;
+  tradeablePositionCount: number;
+  runProgress: number | null;
+  runProgressLabel: string;
   onModeChange: (value: TraderBacktestMode) => void;
   onWindowChange: (value: TraderBacktestWindow) => void;
   onInitialBalanceChange: (value: string) => void;
   onRun: () => void;
   onSelectRun: (run: TraderBacktestRunRecord) => void;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const text = useBacktestText();
   const analytics = useMemo(
     () => (props.currentBacktest ? buildTraderBacktestAnalytics(props.currentBacktest) : null),
     [props.currentBacktest],
   );
   const hourDistribution = analytics
-    ? analytics.openHourCounts.map((value, hour) => ({
-        label: hour.toString().padStart(2, "0"),
-        value,
-      }))
+    ? analytics.openHourCounts.map((value, hour) => {
+        const hourLabel = hour.toString().padStart(2, "0");
+        return {
+          label: `${hourLabel}:00`,
+          value,
+          category: text.openHourRangeLabel(hourLabel),
+        };
+      })
     : [];
   const weekdayDistribution = analytics
     ? analytics.openWeekdayCounts.map((value, index) => ({
         label: text.weekdayLabels[index] ?? `${index + 1}`,
         value,
+        category: text.openWeekdayLabel(text.weekdayLabels[index] ?? `${index + 1}`),
       }))
     : [];
+  const windowRangeLabel = props.windowPreview
+    ? formatBacktestWindowRangeLabel(props.windowPreview, locale)
+    : null;
+  const windowPreviewLabel =
+    props.windowPreview && props.windowPreview.tradeableCount > 0 && windowRangeLabel
+      ? t("discover.backtestWindowPreview", {
+          range: windowRangeLabel,
+          count: props.windowPreview.tradeableCount,
+        })
+      : t("discover.backtestWindowPreviewEmpty");
+  const windowMismatch =
+    props.currentBacktest !== null && props.currentBacktest.window !== props.window;
 
   return (
-    <div className="space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
+    <div className="min-w-0 space-y-4 rounded-2xl border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">{t("discover.backtestTitle")}</h2>
           <p className="text-sm text-muted-foreground">{t("discover.backtestDescription")}</p>
         </div>
-        <div className="text-xs text-muted-foreground">
-          {t("discover.backtestHistoryRows", { count: props.data.historyPositions.length })}
+        <div className="max-w-sm text-right text-xs text-muted-foreground">
+          {windowPreviewLabel}
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <label className="space-y-1">
+      <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 md:grid-cols-4">
+        <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">
             {t("discover.backtestMode")}
           </span>
           <select
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            className="h-9 w-full rounded-lg border bg-background px-3 text-sm shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
             value={props.mode}
+            disabled={props.isRunning}
             onChange={(event) => props.onModeChange(event.target.value as TraderBacktestMode)}
           >
             {BACKTEST_MODE_OPTIONS.map((option) => (
@@ -281,13 +437,14 @@ function BacktestWorkspace(props: {
             ))}
           </select>
         </label>
-        <label className="space-y-1">
+        <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">
             {t("discover.backtestWindow")}
           </span>
           <select
-            className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            className="h-9 w-full rounded-lg border bg-background px-3 text-sm shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
             value={props.window}
+            disabled={props.isRunning}
             onChange={(event) => props.onWindowChange(event.target.value as TraderBacktestWindow)}
           >
             {BACKTEST_WINDOW_OPTIONS.map((option) => (
@@ -297,19 +454,21 @@ function BacktestWorkspace(props: {
             ))}
           </select>
         </label>
-        <label className="space-y-1">
+        <label className="space-y-1.5">
           <span className="text-xs font-medium text-muted-foreground">
             {t("discover.backtestInitialBalance")}
           </span>
           <Input
-            className="h-9"
+            className="h-9 rounded-lg shadow-sm"
             inputMode="decimal"
             value={props.initialBalanceInput}
+            disabled={props.isRunning}
             onChange={(event) => props.onInitialBalanceChange(event.target.value)}
           />
         </label>
         <div className="flex items-end">
           <Button
+            type="button"
             className="w-full"
             disabled={!props.canRun || props.isRunning}
             onClick={props.onRun}
@@ -326,242 +485,59 @@ function BacktestWorkspace(props: {
         </div>
       </div>
 
+      {props.mode === "compound" && props.window !== "all" ? (
+        <p className="text-xs text-muted-foreground">{t("discover.backtestCompoundWindowNote")}</p>
+      ) : null}
+
+      {windowMismatch ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          {t("discover.backtestWindowStale", {
+            runWindow: backtestWindowLabel(props.currentBacktest!.window, t),
+            selectedWindow: backtestWindowLabel(props.window, t),
+          })}
+        </div>
+      ) : null}
+
+      {props.runProgress !== null ? (
+        <BacktestRunProgress progress={props.runProgress} label={props.runProgressLabel} />
+      ) : null}
+
       {!props.canRun ? (
         <div className="rounded-xl border border-dashed p-3 text-sm text-muted-foreground">
-          {props.data.historyPositions.length === 0
+          {props.tradeablePositionCount === 0
             ? t("discover.noHistoryForBacktest")
             : t("discover.invalidBacktestInput")}
         </div>
       ) : null}
 
       {props.savedRuns.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {props.savedRuns.map((run) => (
-            <Button
-              key={run.id}
-              size="sm"
-              variant={props.currentBacktest?.id === run.id ? "default" : "outline"}
-              onClick={() => props.onSelectRun(run)}
-            >
-              {formatSavedRunLabel(run, t)}
-            </Button>
-          ))}
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+          <div className="flex min-w-max gap-2">
+            {props.savedRuns.map((run) => (
+              <Button
+                key={run.id}
+                size="sm"
+                variant={props.currentBacktest?.id === run.id ? "default" : "outline"}
+                className="rounded-full"
+                onClick={() => props.onSelectRun(run)}
+              >
+                {formatSavedRunLabel(run, locale, t)}
+              </Button>
+            ))}
+          </div>
         </div>
       ) : null}
 
       {props.currentBacktest && analytics ? (
-        <>
-          <div className="rounded-xl border bg-background p-4">
-            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <RunMetaChip
-                label={text.runCreatedAt}
-                value={formatLocalDateTime(props.currentBacktest.createdAt)}
-              />
-              <RunMetaChip
-                label={t("discover.backtestMode")}
-                value={backtestModeLabel(props.currentBacktest.mode, t)}
-              />
-              <RunMetaChip
-                label={t("discover.backtestWindow")}
-                value={backtestWindowLabel(props.currentBacktest.window, t)}
-              />
-              <RunMetaChip
-                label={t("discover.backtestInitialBalance")}
-                value={formatUsdDetailed(props.currentBacktest.initialBalance)}
-              />
-              <RunMetaChip
-                label={text.tradeCount}
-                value={String(props.currentBacktest.trades.length)}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-            <StatCard
-              label={t("discover.backtestFinalEquity")}
-              value={formatUsd(props.currentBacktest.summary.finalEquity)}
-              highlight
-            />
-            <StatCard
-              label={t("discover.backtestReturn")}
-              value={formatPercent(props.currentBacktest.summary.totalReturn)}
-            />
-            <StatCard
-              label={t("discover.backtestProfit")}
-              value={formatUsd(props.currentBacktest.summary.realizedProfit)}
-            />
-            <StatCard
-              label={t("discover.backtestMaxDrawdown")}
-              value={formatUsd(props.currentBacktest.summary.maxDrawdown)}
-            />
-            <StatCard
-              label={t("discover.backtestMaxDrawdownRate")}
-              value={formatPercent(props.currentBacktest.summary.maxDrawdownRate)}
-            />
-            <StatCard
-              label={t("discover.winRate")}
-              value={formatPercent(props.currentBacktest.summary.winRate)}
-            />
-            <StatCard
-              label={text.averageTradeProfit}
-              value={formatUsd(analytics.averageTradeProfit)}
-            />
-            <StatCard
-              label={text.averageTradeReturn}
-              value={formatPercent(analytics.averageTradeReturn)}
-            />
-            <StatCard
-              label={text.averageHoldingDuration}
-              value={formatDurationLabel(analytics.averageHoldingDurationMs)}
-            />
-            <StatCard
-              label={text.averageNotional}
-              value={formatUsd(analytics.averageNotionalUsd)}
-            />
-            <StatCard label={text.totalNotional} value={formatUsd(analytics.totalNotionalUsd)} />
-            <StatCard
-              label={text.grossProfit}
-              value={formatUsd(props.currentBacktest.summary.grossProfit)}
-            />
-            <StatCard
-              label={text.grossLoss}
-              value={formatUsd(props.currentBacktest.summary.grossLoss)}
-            />
-            <StatCard
-              label={text.largestGain}
-              value={formatUsd(props.currentBacktest.summary.largestGain)}
-            />
-            <StatCard
-              label={text.largestLoss}
-              value={formatUsd(props.currentBacktest.summary.largestLoss)}
-            />
-            <StatCard
-              label={text.profitFactor}
-              value={props.currentBacktest.summary.profitFactorLabel}
-            />
-            <StatCard label={text.profitableTrades} value={String(analytics.profitableTrades)} />
-            <StatCard label={text.losingTrades} value={String(analytics.losingTrades)} />
-            <StatCard
-              label={text.averageDrawdownRate}
-              value={formatPercent(analytics.averageDrawdownRate)}
-            />
-            <StatCard
-              label={text.closedTrades}
-              value={String(props.currentBacktest.summary.closedTrades)}
-            />
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <ChartCard
-              title={t("discover.backtestEquityCurve")}
-              subtitle={text.chartCloseTimeSubtitle}
-            >
-              <LineChartPanel
-                points={analytics.equitySeries}
-                colorClassName="text-primary"
-                emptyMessage={text.noData}
-                valueFormatter={formatUsdDetailed}
-              />
-            </ChartCard>
-
-            <ChartCard title={text.cumulativeProfit} subtitle={text.chartCloseTimeSubtitle}>
-              <LineChartPanel
-                points={analytics.cumulativeProfitSeries}
-                colorClassName="text-emerald-500"
-                emptyMessage={text.noData}
-                valueFormatter={formatUsdDetailed}
-              />
-            </ChartCard>
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <ChartCard title={text.cumulativeReturn} subtitle={text.chartCloseTimeSubtitle}>
-              <LineChartPanel
-                points={analytics.cumulativeReturnSeries}
-                colorClassName="text-sky-500"
-                emptyMessage={text.noData}
-                asPercent
-              />
-            </ChartCard>
-
-            <ChartCard title={text.perTradeProfit} subtitle={text.chartTradeOrderSubtitle}>
-              <StickChartPanel
-                points={analytics.tradeProfitSeries}
-                emptyMessage={text.noData}
-                valueFormatter={formatUsdDetailed}
-              />
-            </ChartCard>
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-2">
-            <ChartCard title={text.profitVsDrawdown} subtitle={text.profitVsDrawdownSubtitle}>
-              <ComparisonDotChartPanel
-                points={analytics.profitVsDrawdownSeries}
-                primaryLabel={text.tradeProfitShort}
-                secondaryLabel={text.drawdownShort}
-                primaryColorClassName="text-emerald-500"
-                secondaryColorClassName="text-rose-500"
-                emptyMessage={text.noData}
-                valueFormatter={formatUsdDetailed}
-              />
-            </ChartCard>
-
-            <ChartCard
-              title={text.returnVsDrawdownRate}
-              subtitle={text.returnVsDrawdownRateSubtitle}
-            >
-              <ComparisonDotChartPanel
-                points={analytics.returnVsDrawdownRateSeries}
-                primaryLabel={text.tradeReturnShort}
-                secondaryLabel={text.drawdownRateShort}
-                primaryColorClassName="text-sky-500"
-                secondaryColorClassName="text-rose-500"
-                emptyMessage={text.noData}
-                valueFormatter={(value) => formatPercent(value)}
-              />
-            </ChartCard>
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-[1fr_1fr_1.2fr]">
-            <ChartCard title={text.openHourDistribution}>
-              <StickChartPanel
-                points={hourDistribution}
-                emptyMessage={text.noData}
-                valueFormatter={formatCount}
-                domainMode="positive"
-              />
-            </ChartCard>
-
-            <ChartCard title={text.openWeekdayDistribution}>
-              <StickChartPanel
-                points={weekdayDistribution}
-                emptyMessage={text.noData}
-                valueFormatter={formatCount}
-                domainMode="positive"
-              />
-            </ChartCard>
-
-            <ChartCard title={text.openDayDistribution}>
-              <StickChartPanel
-                points={analytics.openDayDistribution}
-                emptyMessage={text.noData}
-                valueFormatter={formatCount}
-                domainMode="positive"
-              />
-            </ChartCard>
-          </div>
-
-          <ChartCard title={text.notionalPerTrade} subtitle={text.chartTradeOrderSubtitle}>
-            <StickChartPanel
-              points={analytics.tradeNotionalSeries}
-              emptyMessage={text.noData}
-              valueFormatter={formatUsdDetailed}
-              domainMode="positive"
-            />
-          </ChartCard>
-
-          <BacktestTradesSection platform={props.platform} analytics={analytics} />
-        </>
+        <BacktestResultsPanel
+          platform={props.platform}
+          backtest={props.currentBacktest}
+          analytics={analytics}
+          hourDistribution={hourDistribution}
+          weekdayDistribution={weekdayDistribution}
+          text={text}
+          t={t}
+        />
       ) : null}
     </div>
   );
@@ -588,7 +564,7 @@ function SummaryStats({ data }: { data: TraderDeepAnalysis }) {
 }
 
 function HistoryPreview({ data }: { data: TraderDeepAnalysis }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const text = useBacktestText();
   const recent = useMemo(() => data.historyPositions.slice(0, 20), [data.historyPositions]);
 
@@ -630,11 +606,11 @@ function HistoryPreview({ data }: { data: TraderDeepAnalysis }) {
                   >
                     {position.side}
                   </td>
-                  <td className="py-2 pr-2 whitespace-nowrap text-muted-foreground">
-                    {formatMaybeDateTime(position.openTime)}
+                  <td className="py-2 pr-2 text-muted-foreground">
+                    <BacktestDateTimeCell timestamp={position.openTime} locale={locale} />
                   </td>
-                  <td className="py-2 pr-2 whitespace-nowrap text-muted-foreground">
-                    {formatMaybeDateTime(position.closeTime)}
+                  <td className="py-2 pr-2 text-muted-foreground">
+                    <BacktestDateTimeCell timestamp={position.closeTime} locale={locale} />
                   </td>
                   <td className="py-2 pr-2 whitespace-nowrap">
                     {formatMaybeDuration(position.openTime, position.closeTime)}
@@ -673,19 +649,19 @@ function BacktestTradesSection({
   platform: TraderPlatform;
   analytics: ReturnType<typeof buildTraderBacktestAnalytics>;
 }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const text = useBacktestText();
   const rows = [...analytics.trades].reverse().slice(0, 80);
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{t("discover.backtestTradeDetails")}</h3>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <BacktestSectionHeader title={t("discover.backtestTradeDetails")} />
         <span className="text-xs text-muted-foreground">
           {platformLabel(platform)} · {rows.length}/{analytics.trades.length}
         </span>
       </div>
-      <div className="overflow-x-auto rounded-xl border">
+      <div className="overflow-x-auto rounded-2xl border bg-card/40">
         <table className="w-full min-w-[1320px] text-xs">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
@@ -716,11 +692,11 @@ function BacktestTradesSection({
                 >
                   {trade.side}
                 </td>
-                <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
-                  {formatLocalDateTime(trade.openTime)}
+                <td className="px-2 py-2 text-muted-foreground">
+                  <BacktestDateTimeCell timestamp={trade.openTime} locale={locale} />
                 </td>
-                <td className="px-2 py-2 whitespace-nowrap text-muted-foreground">
-                  {formatLocalDateTime(trade.closeTime)}
+                <td className="px-2 py-2 text-muted-foreground">
+                  <BacktestDateTimeCell timestamp={trade.closeTime} locale={locale} />
                 </td>
                 <td className="px-2 py-2 whitespace-nowrap">
                   {formatDurationLabel(trade.holdingDurationMs)}
@@ -767,10 +743,332 @@ function BacktestTradesSection({
   );
 }
 
+function BacktestResultsPanel(props: {
+  platform: TraderPlatform;
+  backtest: TraderBacktestRunRecord;
+  analytics: ReturnType<typeof buildTraderBacktestAnalytics>;
+  hourDistribution: Array<{ label: string; value: number; category?: string }>;
+  weekdayDistribution: Array<{ label: string; value: number; category?: string }>;
+  text: ReturnType<typeof useBacktestText>;
+  t: ReturnType<typeof useI18n>["t"];
+}) {
+  const { locale } = useI18n();
+  const { backtest, analytics, text, t } = props;
+  const sampledTradeProfits = downsampleChartPoints(analytics.tradeProfitSeries, 72);
+  const sampledNotional = downsampleChartPoints(analytics.tradeNotionalSeries, 72);
+
+  return (
+    <div className="space-y-8 border-t pt-6">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold">{text.resultsOverview}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {formatBacktestCompactDateTime(backtest.createdAt, locale)} ·{" "}
+            {backtestModeLabel(backtest.mode, t)} · {backtestWindowLabel(backtest.window, t)} ·{" "}
+            {text.tradeCount} {backtest.trades.length}
+          </p>
+        </div>
+        <div className="text-sm text-muted-foreground">
+          {t("discover.backtestInitialBalance")}: {formatUsdDetailed(backtest.initialBalance)}
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <HeroStatCard
+          label={t("discover.backtestFinalEquity")}
+          value={formatUsdDetailed(backtest.summary.finalEquity)}
+          tone="primary"
+        />
+        <HeroStatCard
+          label={t("discover.backtestReturn")}
+          value={formatPercent(backtest.summary.totalReturn)}
+          tone={backtest.summary.totalReturn >= 0 ? "positive" : "negative"}
+        />
+        <HeroStatCard
+          label={t("discover.backtestProfit")}
+          value={formatUsdDetailed(backtest.summary.realizedProfit)}
+          tone={backtest.summary.realizedProfit >= 0 ? "positive" : "negative"}
+        />
+        <HeroStatCard
+          label={t("discover.backtestMaxDrawdownRate")}
+          value={formatPercent(backtest.summary.maxDrawdownRate)}
+          tone="negative"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <MetricGroup
+          title={text.performanceGroup}
+          items={[
+            { label: t("discover.winRate"), value: formatPercent(backtest.summary.winRate) },
+            { label: text.profitFactor, value: backtest.summary.profitFactorLabel },
+            {
+              label: text.grossProfit,
+              value: formatUsd(backtest.summary.grossProfit),
+              tone: "positive",
+            },
+            {
+              label: text.grossLoss,
+              value: formatUsd(backtest.summary.grossLoss),
+              tone: "negative",
+            },
+            {
+              label: text.largestGain,
+              value: formatUsd(backtest.summary.largestGain),
+              tone: "positive",
+            },
+            {
+              label: text.largestLoss,
+              value: formatUsd(backtest.summary.largestLoss),
+              tone: "negative",
+            },
+          ]}
+        />
+        <MetricGroup
+          title={text.riskGroup}
+          items={[
+            {
+              label: t("discover.backtestMaxDrawdown"),
+              value: formatUsdDetailed(backtest.summary.maxDrawdown),
+              tone: "negative",
+            },
+            {
+              label: text.averageDrawdownRate,
+              value: formatPercent(analytics.averageDrawdownRate),
+              tone: "negative",
+            },
+            {
+              label: text.averageTradeReturn,
+              value: formatPercent(analytics.averageTradeReturn),
+            },
+            {
+              label: text.averageHoldingDuration,
+              value: formatDurationLabel(analytics.averageHoldingDurationMs),
+            },
+          ]}
+        />
+        <MetricGroup
+          title={text.tradeGroup}
+          items={[
+            { label: text.closedTrades, value: String(backtest.summary.closedTrades) },
+            {
+              label: text.profitableTrades,
+              value: String(analytics.profitableTrades),
+              tone: "positive",
+            },
+            { label: text.losingTrades, value: String(analytics.losingTrades), tone: "negative" },
+            { label: text.averageTradeProfit, value: formatUsd(analytics.averageTradeProfit) },
+            { label: text.averageNotional, value: formatUsd(analytics.averageNotionalUsd) },
+            { label: text.totalNotional, value: formatUsd(analytics.totalNotionalUsd) },
+          ]}
+        />
+      </div>
+
+      <BacktestSectionHeader title={text.curveGroup} />
+      <ChartCard title={t("discover.backtestEquityCurve")} subtitle={text.chartCloseTimeSubtitle}>
+        <BacktestLineChart
+          points={analytics.equitySeries}
+          color="var(--primary)"
+          emptyMessage={text.noData}
+          valueFormatter={formatUsdDetailed}
+          valueLabel={t("discover.backtestEquity")}
+          heightClassName="h-72"
+          tradeSequenceLabel={text.tradeSequenceLabel}
+        />
+      </ChartCard>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartCard title={text.cumulativeProfit} subtitle={text.chartCloseTimeSubtitle}>
+          <BacktestLineChart
+            points={analytics.cumulativeProfitSeries}
+            color="hsl(142 71% 45%)"
+            emptyMessage={text.noData}
+            valueFormatter={formatUsdDetailed}
+            valueLabel={text.cumulativeProfit}
+            tradeSequenceLabel={text.tradeSequenceLabel}
+          />
+        </ChartCard>
+        <ChartCard title={text.cumulativeReturn} subtitle={text.chartCloseTimeSubtitle}>
+          <BacktestLineChart
+            points={analytics.cumulativeReturnSeries}
+            color="hsl(199 89% 48%)"
+            emptyMessage={text.noData}
+            valueLabel={text.cumulativeReturn}
+            asPercent
+            tradeSequenceLabel={text.tradeSequenceLabel}
+          />
+        </ChartCard>
+      </div>
+
+      <BacktestSectionHeader
+        title={text.distributionGroup}
+        subtitle={analytics.tradeProfitSeries.length > 72 ? text.sampledChartNote : undefined}
+      />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ChartCard title={text.perTradeProfit} subtitle={text.chartTradeOrderSubtitle}>
+          <BacktestBarChart
+            points={sampledTradeProfits}
+            emptyMessage={text.noData}
+            valueFormatter={formatUsdDetailed}
+            valueLabel={text.backtestProfit}
+            hoverLabelMode="trade"
+            tradeSequenceLabel={text.tradeSequenceLabel}
+          />
+        </ChartCard>
+        <ChartCard title={text.notionalPerTrade} subtitle={text.chartTradeOrderSubtitle}>
+          <BacktestBarChart
+            points={sampledNotional}
+            emptyMessage={text.noData}
+            valueFormatter={formatUsdDetailed}
+            valueLabel={text.notional}
+            domainMode="positive"
+            hoverLabelMode="trade"
+            tradeSequenceLabel={text.tradeSequenceLabel}
+          />
+        </ChartCard>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <ChartCard title={text.openHourDistribution}>
+          <BacktestBarChart
+            points={props.hourDistribution}
+            emptyMessage={text.noData}
+            valueFormatter={formatCount}
+            valueLabel={text.openCountLabel}
+            domainMode="positive"
+            heightClassName="h-48"
+          />
+        </ChartCard>
+        <ChartCard title={text.openWeekdayDistribution}>
+          <BacktestBarChart
+            points={props.weekdayDistribution}
+            emptyMessage={text.noData}
+            valueFormatter={formatCount}
+            valueLabel={text.openCountLabel}
+            domainMode="positive"
+            heightClassName="h-48"
+          />
+        </ChartCard>
+        <ChartCard title={text.openDayDistribution}>
+          <BacktestBarChart
+            points={analytics.openDayDistribution}
+            emptyMessage={text.noData}
+            valueFormatter={formatCount}
+            valueLabel={text.openCountLabel}
+            domainMode="positive"
+            heightClassName="h-48"
+            hoverLabelMode="time"
+            showTimeRange
+            tradeSequenceLabel={text.tradeSequenceLabel}
+          />
+        </ChartCard>
+      </div>
+
+      <BacktestTradesSection platform={props.platform} analytics={analytics} />
+    </div>
+  );
+}
+
+function BacktestSectionHeader(props: { title: string; subtitle?: string }) {
+  return (
+    <div className="space-y-1">
+      <h3 className="text-sm font-semibold tracking-wide text-foreground">{props.title}</h3>
+      {props.subtitle ? <p className="text-xs text-muted-foreground">{props.subtitle}</p> : null}
+    </div>
+  );
+}
+
+function HeroStatCard(props: {
+  label: string;
+  value: string;
+  tone?: "primary" | "positive" | "negative";
+}) {
+  const toneClassName =
+    props.tone === "positive"
+      ? "border-emerald-500/20 bg-emerald-500/5"
+      : props.tone === "negative"
+        ? "border-rose-500/20 bg-rose-500/5"
+        : "border-primary/20 bg-primary/5";
+  const valueClassName =
+    props.tone === "positive"
+      ? "text-emerald-500"
+      : props.tone === "negative"
+        ? "text-rose-500"
+        : "text-foreground";
+
+  return (
+    <div className={`rounded-2xl border p-4 ${toneClassName}`}>
+      <div className="text-xs font-medium text-muted-foreground">{props.label}</div>
+      <div className={`mt-2 truncate text-2xl font-semibold tracking-tight ${valueClassName}`}>
+        {props.value}
+      </div>
+    </div>
+  );
+}
+
+function MetricGroup(props: {
+  title: string;
+  items: Array<{ label: string; value: string; tone?: "positive" | "negative" }>;
+}) {
+  return (
+    <div className="rounded-2xl border bg-muted/10 p-4">
+      <h4 className="mb-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        {props.title}
+      </h4>
+      <div className="space-y-2.5">
+        {props.items.map((item) => (
+          <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-muted-foreground">{item.label}</span>
+            <span
+              className={`truncate font-medium ${
+                item.tone === "positive"
+                  ? "text-emerald-500"
+                  : item.tone === "negative"
+                    ? "text-rose-500"
+                    : "text-foreground"
+              }`}
+              title={item.value}
+            >
+              {item.value}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BacktestRunProgress(props: { progress: number; label: string }) {
+  return (
+    <div
+      className="rounded-xl border border-primary/30 bg-primary/5 p-4"
+      role="status"
+      aria-live="polite"
+      aria-busy={props.progress < 100}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3 text-sm">
+        <span className="flex min-w-0 items-center gap-2 font-medium text-foreground">
+          <Loader2Icon
+            className={`size-4 shrink-0 ${props.progress < 100 ? "animate-spin text-primary" : "text-emerald-500"}`}
+          />
+          <span className="truncate">{props.label}</span>
+        </span>
+        <span className="shrink-0 text-muted-foreground">{Math.round(props.progress)}%</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
+          style={{ width: `${props.progress}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ChartCard(props: { title: string; subtitle?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border bg-background p-4">
-      <div className="mb-3">
+    <div className="overflow-hidden rounded-2xl border bg-card/60 p-4 shadow-sm">
+      <div className="mb-4">
         <h3 className="text-sm font-semibold">{props.title}</h3>
         {props.subtitle ? (
           <p className="mt-1 text-xs text-muted-foreground">{props.subtitle}</p>
@@ -781,267 +1079,14 @@ function ChartCard(props: { title: string; subtitle?: string; children: ReactNod
   );
 }
 
-function LineChartPanel(props: {
-  points: Array<{ value: number; label: string }>;
-  colorClassName: string;
-  emptyMessage: string;
-  asPercent?: boolean;
-  valueFormatter?: (value: number) => string;
-}) {
-  const text = useBacktestText();
-  const path = buildLineChartPoints(props.points.map((point) => point.value));
-
-  if (props.points.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
-        {props.emptyMessage}
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-2xl border bg-card p-4">
-      <div className="h-56 w-full">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
-          <line
-            x1="0"
-            x2="100"
-            y1="100"
-            y2="100"
-            className="stroke-border"
-            strokeWidth="0.8"
-            opacity="0.6"
-          />
-          <polyline
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            points={path}
-            className={props.colorClassName}
-          />
-          {buildLineChartDots(props.points.map((point) => point.value)).map((dot, index) => (
-            <circle
-              key={`${props.points[index]?.label ?? index}-dot`}
-              cx={dot.x}
-              cy={dot.y}
-              r="1.1"
-              className={props.colorClassName}
-              fill="currentColor"
-            >
-              <title>
-                {props.points[index]?.label}:{" "}
-                {props.valueFormatter
-                  ? props.valueFormatter(props.points[index]?.value ?? 0)
-                  : formatMetricValue(props.points[index]?.value ?? 0, props.asPercent)}
-              </title>
-            </circle>
-          ))}
-        </svg>
-      </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{props.points[0]?.label ?? text.na}</span>
-        <span>
-          {props.valueFormatter
-            ? props.valueFormatter(props.points.at(-1)?.value ?? 0)
-            : formatMetricValue(props.points.at(-1)?.value ?? 0, props.asPercent)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function StickChartPanel(props: {
-  points: Array<{ value: number; label: string }>;
-  emptyMessage: string;
-  valueFormatter?: (value: number) => string;
-  domainMode?: "centered" | "positive";
-}) {
-  const text = useBacktestText();
-
-  if (props.points.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
-        {props.emptyMessage}
-      </div>
-    );
-  }
-
-  const values = props.points.map((point) => point.value);
-  const domainMode = props.domainMode ?? "centered";
-  const min = domainMode === "positive" ? 0 : Math.min(...values, 0);
-  const max = Math.max(...values, domainMode === "positive" ? 1 : 0);
-  const range = max - min || 1;
-  const baselineValue = domainMode === "positive" ? 0 : 0;
-  const baselineY = clampSvgY(100 - ((baselineValue - min) / range) * 100);
-
-  return (
-    <div className="rounded-2xl border bg-card p-4">
-      <div className="h-56 w-full">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
-          <line
-            x1="0"
-            x2="100"
-            y1={baselineY}
-            y2={baselineY}
-            className="stroke-border"
-            strokeWidth="0.8"
-            opacity="0.7"
-          />
-          {props.points.map((point, index) => {
-            const x = props.points.length === 1 ? 50 : (index / (props.points.length - 1)) * 100;
-            const y = clampSvgY(100 - ((point.value - min) / range) * 100);
-            const colorClassName =
-              point.value >= baselineValue || domainMode === "positive"
-                ? "text-emerald-500"
-                : "text-rose-500";
-            return (
-              <g key={`${point.label}-${index}`} className={colorClassName}>
-                <line
-                  x1={x}
-                  x2={x}
-                  y1={baselineY}
-                  y2={y}
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  opacity="0.9"
-                />
-                <circle cx={x} cy={y} r="1.25" fill="currentColor">
-                  <title>
-                    {point.label}: {props.valueFormatter?.(point.value) ?? point.value.toFixed(2)}
-                  </title>
-                </circle>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{props.points[0]?.label ?? text.na}</span>
-        <span>{props.points.at(-1)?.label ?? text.na}</span>
-      </div>
-    </div>
-  );
-}
-
-function ComparisonDotChartPanel(props: {
-  points: Array<{ label: string; primary: number; secondary: number }>;
-  primaryLabel: string;
-  secondaryLabel: string;
-  primaryColorClassName: string;
-  secondaryColorClassName: string;
-  emptyMessage: string;
-  valueFormatter?: (value: number) => string;
-}) {
-  if (props.points.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
-        {props.emptyMessage}
-      </div>
-    );
-  }
-
-  const values = props.points.flatMap((point) => [point.primary, point.secondary, 0]);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-  const zeroY = 100 - ((0 - min) / range) * 100;
-  const primaryPoints = buildLineChartPointsFromValues(
-    props.points.map((point) => point.primary),
-    min,
-    range,
-  );
-  const secondaryPoints = buildLineChartPointsFromValues(
-    props.points.map((point) => point.secondary),
-    min,
-    range,
-  );
-
-  return (
-    <div className="rounded-2xl border bg-card p-4">
-      <div className="h-56 w-full">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
-          <line x1="0" x2="100" y1={zeroY} y2={zeroY} className="stroke-border" strokeWidth="0.8" />
-          <polyline
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.05"
-            points={primaryPoints}
-            className={props.primaryColorClassName}
-          />
-          <polyline
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.05"
-            points={secondaryPoints}
-            className={props.secondaryColorClassName}
-          />
-          {props.points.map((point, index) => {
-            const x = props.points.length === 1 ? 50 : (index / (props.points.length - 1)) * 100;
-            const primaryY = 100 - ((point.primary - min) / range) * 100;
-            const secondaryY = 100 - ((point.secondary - min) / range) * 100;
-            return (
-              <g key={`${point.label}-${index}`}>
-                <circle
-                  cx={x}
-                  cy={primaryY}
-                  r="1.15"
-                  className={props.primaryColorClassName}
-                  fill="currentColor"
-                >
-                  <title>
-                    {props.primaryLabel}:{" "}
-                    {props.valueFormatter?.(point.primary) ?? point.primary.toFixed(2)}
-                  </title>
-                </circle>
-                <circle
-                  cx={x}
-                  cy={secondaryY}
-                  r="1.15"
-                  className={props.secondaryColorClassName}
-                  fill="currentColor"
-                >
-                  <title>
-                    {props.secondaryLabel}:{" "}
-                    {props.valueFormatter?.(point.secondary) ?? point.secondary.toFixed(2)}
-                  </title>
-                </circle>
-              </g>
-            );
-          })}
-        </svg>
-      </div>
-      <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-        <LegendDot colorClassName={props.primaryColorClassName} label={props.primaryLabel} />
-        <LegendDot colorClassName={props.secondaryColorClassName} label={props.secondaryLabel} />
-      </div>
-    </div>
-  );
-}
-
-function LegendDot(props: { colorClassName: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className={`size-2 rounded-full ${props.colorClassName.replace("text-", "bg-")}`} />
-      {props.label}
-    </span>
-  );
-}
-
-function RunMetaChip(props: { label: string; value: string }) {
-  return (
-    <span className="rounded-full border px-2.5 py-1">
-      <span className="text-foreground">{props.label}</span>
-      <span className="mx-1">:</span>
-      <span>{props.value}</span>
-    </span>
-  );
-}
-
 function StatCard(props: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="rounded-lg border p-3">
+    <div className="rounded-xl border bg-muted/10 p-3">
       <div className="text-xs text-muted-foreground">{props.label}</div>
-      <div className={`mt-1 text-sm font-medium ${props.highlight ? "text-primary" : ""}`}>
+      <div
+        className={`mt-1 truncate text-sm font-medium ${props.highlight ? "text-primary" : ""}`}
+        title={props.value}
+      >
         {props.value}
       </div>
     </div>
@@ -1072,12 +1117,19 @@ function formatCount(value: number) {
   return `${value}`;
 }
 
-function formatLocalDateTime(timestamp: number) {
-  return new Date(timestamp).toLocaleString();
-}
+function BacktestDateTimeCell(props: { timestamp: number | null | undefined; locale: AppLocale }) {
+  if (typeof props.timestamp !== "number") {
+    return <span>—</span>;
+  }
 
-function formatMaybeDateTime(timestamp: number | null | undefined) {
-  return typeof timestamp === "number" ? formatLocalDateTime(timestamp) : "—";
+  return (
+    <div className="min-w-[8.5rem] leading-tight whitespace-nowrap">
+      <div>{formatBacktestDateWithWeekday(props.timestamp, props.locale)}</div>
+      <div className="text-[10px] text-muted-foreground/80">
+        {formatBacktestTimeOnly(props.timestamp, props.locale)}
+      </div>
+    </div>
+  );
 }
 
 function formatMaybeDuration(
@@ -1096,8 +1148,12 @@ function formatCompactNumber(value: number, maximumFractionDigits = 2) {
   }).format(value);
 }
 
-function formatSavedRunLabel(run: TraderBacktestRunRecord, t: ReturnType<typeof useI18n>["t"]) {
-  return `${new Date(run.createdAt).toLocaleString()} · ${backtestModeLabel(run.mode, t)} · ${backtestWindowLabel(run.window, t)}`;
+function formatSavedRunLabel(
+  run: TraderBacktestRunRecord,
+  locale: AppLocale,
+  t: ReturnType<typeof useI18n>["t"],
+) {
+  return `${formatBacktestCompactDateTime(run.createdAt, locale)} · ${backtestModeLabel(run.mode, t)} · ${backtestWindowLabel(run.window, t)}`;
 }
 
 function backtestModeLabel(mode: TraderBacktestMode, t: ReturnType<typeof useI18n>["t"]) {
@@ -1110,64 +1166,14 @@ function backtestWindowLabel(window: TraderBacktestWindow, t: ReturnType<typeof 
   return option ? t(option.labelKey) : window;
 }
 
-function buildLineChartPoints(values: number[]) {
-  if (values.length === 0) {
-    return "";
-  }
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  return values
-    .map((value, index) => {
-      const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-      const y = 100 - ((value - min) / range) * 100;
-      return `${x},${y}`;
-    })
-    .join(" ");
-}
-
-function buildLineChartDots(values: number[]) {
-  if (values.length === 0) {
-    return [];
-  }
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  return values.map((value, index) => {
-    const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-    const y = clampSvgY(100 - ((value - min) / range) * 100);
-    return { x, y };
-  });
-}
-
-function buildLineChartPointsFromValues(values: number[], min: number, range: number) {
-  if (values.length === 0) {
-    return "";
-  }
-
-  return values
-    .map((value, index) => {
-      const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-      const y = 100 - ((value - min) / range) * 100;
-      return `${x},${y}`;
-    })
-    .join(" ");
-}
-
-function clampSvgY(value: number) {
-  return Math.max(1, Math.min(99, value));
-}
-
-function formatMetricValue(value: number, asPercent = false) {
-  return asPercent ? `${(value * 100).toFixed(2)}%` : value.toFixed(2);
-}
-
 function platformLabel(platform: TraderPlatform) {
   return PLATFORMS.find((item) => item.value === platform)?.label ?? platform;
+}
+
+function parseInitialBalance(input: string) {
+  const normalized = input.trim().replace(/,/g, "");
+  if (!normalized) return Number.NaN;
+  return Number(normalized);
 }
 
 function useBacktestText() {
@@ -1180,7 +1186,21 @@ function useBacktestText() {
       ? "当前回测记录还没有足够的数据可展示。"
       : "This backtest record does not have enough data yet.",
     runCreatedAt: isZh ? "生成时间" : "Created at",
+    resultsOverview: isZh ? "回测结果概览" : "Backtest overview",
+    performanceGroup: isZh ? "收益表现" : "Performance",
+    riskGroup: isZh ? "风险指标" : "Risk",
+    tradeGroup: isZh ? "交易统计" : "Trade stats",
+    curveGroup: isZh ? "权益与收益曲线" : "Equity & profit curves",
+    distributionGroup: isZh ? "分布分析" : "Distribution analysis",
+    sampledChartNote: isZh
+      ? "逐笔图表已抽样展示，完整明细见下方表格。"
+      : "Per-trade charts are sampled; see the table below for full details.",
     tradeCount: isZh ? "成交笔数" : "Trades",
+    tradeSequenceLabel: (sequence: string) => (isZh ? `第 ${sequence} 笔` : `Trade #${sequence}`),
+    openHourRangeLabel: (hour: string) =>
+      isZh ? `${hour}:00 – ${hour}:59` : `${hour}:00 – ${hour}:59`,
+    openWeekdayLabel: (weekday: string) => (isZh ? `${weekday} 开仓` : `Opens on ${weekday}`),
+    openCountLabel: isZh ? "开仓次数" : "Open count",
     averageTradeProfit: isZh ? "平均单笔收益" : "Avg trade profit",
     averageTradeReturn: isZh ? "平均单笔收益率" : "Avg trade return",
     averageHoldingDuration: isZh ? "平均持仓时长" : "Avg holding time",

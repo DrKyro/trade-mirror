@@ -127,14 +127,14 @@ export class DiscoverCrawlerScheduler {
         scope: "system",
         level: "warn",
         title: "discover crawler completed with errors",
-        detail: `Crawled ${result.uniqueTraders} unique traders (${result.totalFetched} raw). Errors: ${result.errors.length}`,
+        detail: `Crawled ${result.uniqueTraders} rank rows (${result.totalFetched} raw), deep cache ${result.deep.succeeded}/${result.deep.attempted}. Rank errors: ${result.errors.length}, deep errors: ${result.deep.failed}`,
       });
     } else {
       await this.deps.pushEvent({
         scope: "system",
         level: "info",
         title: "discover crawler completed",
-        detail: `Crawled ${result.uniqueTraders} unique traders (${result.totalFetched} raw) across ${Object.keys(result.perPlatform).length} platforms.`,
+        detail: `Crawled ${result.uniqueTraders} rank rows (${result.totalFetched} raw), deep cache ${result.deep.succeeded}/${result.deep.attempted} across ${Object.keys(result.perPlatform).length} platforms.`,
       });
     }
 

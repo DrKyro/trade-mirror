@@ -26,32 +26,38 @@ export const logContentQueryOptions = (sourceKey: string, relativePath: string) 
       }),
   });
 
-export const teacherLogsQueryOptions = (teacherId: string) =>
+export const accountLogsQueryOptions = (accountId: string) =>
   queryOptions({
-    queryKey: ["system", "teacher-logs", teacherId],
+    queryKey: ["system", "account-logs", accountId],
     queryFn: ({ signal }) =>
       $listTeacherLogsForCurrentUser({
         signal,
         data: {
-          teacherId,
+          teacherId: accountId,
         },
       }),
   });
 
-export const teacherLogContentQueryOptions = (
-  teacherId: string,
+export const accountLogContentQueryOptions = (
+  accountId: string,
   sourceKey: string,
   relativePath: string,
 ) =>
   queryOptions({
-    queryKey: ["system", "teacher-logs", teacherId, sourceKey, relativePath],
+    queryKey: ["system", "account-logs", accountId, sourceKey, relativePath],
     queryFn: ({ signal }) =>
       $readTeacherLogForCurrentUser({
         signal,
         data: {
-          teacherId,
+          teacherId: accountId,
           sourceKey,
           relativePath,
         },
       }),
   });
+
+/** @deprecated Use accountLogsQueryOptions */
+export const teacherLogsQueryOptions = accountLogsQueryOptions;
+
+/** @deprecated Use accountLogContentQueryOptions */
+export const teacherLogContentQueryOptions = accountLogContentQueryOptions;

@@ -7,11 +7,11 @@ import { $updateTeacherFollowRelations } from "#/lib/trading/repository";
 import type { TeacherRecord } from "#/lib/trading/types";
 
 export function EditFollowRelationsForm(props: {
-  teacher: TeacherRecord;
+  account: TeacherRecord;
   onSubmitted?: () => void;
 }) {
   const { t } = useI18n();
-  const [value, setValue] = useState(JSON.stringify(props.teacher.followRelations, null, 2));
+  const [value, setValue] = useState(JSON.stringify(props.account.followRelations, null, 2));
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -39,7 +39,7 @@ export function EditFollowRelationsForm(props: {
         try {
           await $updateTeacherFollowRelations({
             data: {
-              teacherId: props.teacher.id,
+              teacherId: props.account.id,
               followRelations: parsed as TeacherRecord["followRelations"],
             },
           });
@@ -56,11 +56,11 @@ export function EditFollowRelationsForm(props: {
       }}
     >
       <div className="grid gap-2">
-        <Label htmlFor={`follow-relations-${props.teacher.id}`}>
+        <Label htmlFor={`follow-relations-${props.account.id}`}>
           {t("form.followRelationEditor")}
         </Label>
         <textarea
-          id={`follow-relations-${props.teacher.id}`}
+          id={`follow-relations-${props.account.id}`}
           className="min-h-64 rounded-2xl border bg-background p-3 font-mono text-sm"
           value={value}
           onChange={(event) => setValue(event.target.value)}

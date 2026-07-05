@@ -12,7 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { user } from "#/lib/db/schema/auth.schema";
-import type { TraderRankItem } from "#/lib/trading/trader-rank-types";
+import type { TraderDeepAnalysis, TraderRankItem } from "#/lib/trading/trader-rank-types";
 import type {
   AppRuntimeStatus,
   ExecutionMode,
@@ -122,6 +122,26 @@ export const userTraderWorkspace = pgTable("user_trader_workspace", {
   initializedAt: timestamp("initialized_at").defaultNow().notNull(),
 });
 
+export const userDiscoverFavorite = pgTable(
+  "user_discover_favorite",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    traderId: text("trader_id").notNull(),
+    uniqueName: text("unique_name").notNull(),
+    nickName: text("nick_name").notNull(),
+    avatar: text("avatar").notNull().default(""),
+    link: text("link").notNull().default(""),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.platform, table.traderId] }),
+    index("user_discover_favorite_user_id_idx").on(table.userId),
+  ],
+);
+
 export const traderSyncState = pgTable(
   "trader_sync_state",
   {
@@ -230,11 +250,31 @@ export const marketCandle = pgTable(
   ],
 );
 
+export const discoverTraderDeepCache = pgTable(
+  "discover_trader_deep_cache",
+  {
+    platform: text("platform").notNull(),
+    traderId: text("trader_id").notNull(),
+    analysisData: jsonb("analysis_data").$type<TraderDeepAnalysis>().notNull(),
+    crawledAt: timestamp("crawled_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.platform, table.traderId] }),
+    index("discover_trader_deep_cache_platform_idx").on(table.platform),
+    index("discover_trader_deep_cache_crawled_at_idx").on(table.crawledAt),
+  ],
+);
+
 export const discoverRankCache = pgTable(
   "discover_rank_cache",
   {
     platform: text("platform").notNull(),
     traderId: text("trader_id").notNull(),
+    timeRange: text("time_range").notNull().default("90"),
     uniqueName: text("unique_name").notNull(),
     nickName: text("nick_name").notNull(),
     avatar: text("avatar").notNull().default(""),
@@ -256,8 +296,9 @@ export const discoverRankCache = pgTable(
       .notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.platform, table.traderId] }),
+    primaryKey({ columns: [table.platform, table.traderId, table.timeRange] }),
     index("discover_rank_cache_platform_idx").on(table.platform),
+    index("discover_rank_cache_time_range_idx").on(table.timeRange),
     index("discover_rank_cache_crawled_at_idx").on(table.crawledAt),
   ],
 );
@@ -298,6 +339,13 @@ export const userTraderWorkspaceRelations = relations(userTraderWorkspace, ({ on
   }),
 }));
 
+export const userDiscoverFavoriteRelations = relations(userDiscoverFavorite, ({ one }) => ({
+  user: one(user, {
+    fields: [userDiscoverFavorite.userId],
+    references: [user.id],
+  }),
+}));
+
 export const traderSyncStateRelations = relations(traderSyncState, ({ one }) => ({
   trader: one(trader, {
     fields: [traderSyncState.traderId],
@@ -309,17 +357,20 @@ export const userTradingRelations = relations(user, ({ many }) => ({
   teachers: many(teacher),
   traderLinks: many(userTrader),
   traderWorkspaces: many(userTraderWorkspace),
+  discoverFavorites: many(userDiscoverFavorite),
 }));
 
 export type TraderRow = typeof trader.$inferSelect;
 export type TeacherRow = typeof teacher.$inferSelect;
 export type UserTraderRow = typeof userTrader.$inferSelect;
 export type UserTraderWorkspaceRow = typeof userTraderWorkspace.$inferSelect;
+export type UserDiscoverFavoriteRow = typeof userDiscoverFavorite.$inferSelect;
 export type TraderSyncStateRow = typeof traderSyncState.$inferSelect;
 export type RuntimeStateRow = typeof runtimeState.$inferSelect;
 export type RuntimeEventRow = typeof runtimeEvent.$inferSelect;
 export type MarketCandleRow = typeof marketCandle.$inferSelect;
 export type DiscoverRankCacheRow = typeof discoverRankCache.$inferSelect;
+export type DiscoverTraderDeepCacheRow = typeof discoverTraderDeepCache.$inferSelect;
 
 export type RuntimeStatePayload = Omit<AppRuntimeStatus, "lastHeartbeat"> & {
   lastHeartbeat: Date | null;

@@ -9,7 +9,12 @@ import type {
   TeacherAccountSnapshot,
   TraderLiveSnapshot,
 } from "#/lib/trading/adapters/platform-adapter";
-import { normalizeSwapSymbol, resolveCredentials } from "#/lib/trading/adapters/shared-utils";
+import {
+  mapCcxtPositionsToSnapshots,
+  normalizeSwapSymbol,
+} from "#/lib/trading/adapters/shared-utils";
+import { BACKTEST_WINDOW_30D_MS, resolveBacktestWindowCutoff } from "#/lib/trading/backtest-window";
+import { createTeacherExchange } from "#/lib/trading/exchange-client";
 import type { TraderPlatformModel } from "#/lib/trading/trader-data-model";
 import type { TraderProfileInference } from "#/lib/trading/trader-profile-inference";
 import type {
@@ -20,6 +25,7 @@ import type {
   TraderRankQuery,
   TraderRankResult,
 } from "#/lib/trading/trader-rank-types";
+import type { ExecutionMode } from "#/lib/trading/types";
 import type {
   CloseFill,
   ExecutionFill,
@@ -29,14 +35,10 @@ import type {
   TraderRecord,
 } from "#/lib/trading/types";
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1_000;
-const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1_000;
-
 function resolveHistoryCutoffTime(
   window: FetchTraderDeepAnalysisOptions["historyWindow"],
 ): number | null {
-  if (window === "all") return null;
-  return Date.now() - (window === "30d" ? THIRTY_DAYS_MS : NINETY_DAYS_MS);
+  return resolveBacktestWindowCutoff(window ?? "all");
 }
 
 function finiteOrNull(value: unknown): number | null {
@@ -425,7 +427,7 @@ async function fetchBinancePositionHistory(
 function deriveBinanceMonthlyAveragePositionValue(
   history: BinancePositionHistoryEntry[],
 ): number | null {
-  const cutoff = Date.now() - THIRTY_DAYS_MS;
+  const cutoff = Date.now() - BACKTEST_WINDOW_30D_MS;
   const notionals = history
     .map((item) => {
       const closed = finiteOrNull(item.closed);
@@ -843,22 +845,17 @@ const BINANCE_ENDPOINTS: EndpointDefinition[] = [
 
 async function createBinanceLiveOrder(input: {
   credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
   symbol: string;
   amount: number;
   positionSide: "long" | "short";
   followOrderId: string;
 }): Promise<ExecutionFill> {
-  const { apiKey, apiSecret } = resolveCredentials(input.credentials, "BINANCE");
-  if (!apiKey || !apiSecret) {
-    throw new Error(
-      "Binance live execution requires teacher credentials or BINANCE_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.binance({
-    apiKey,
-    secret: apiSecret,
-    options: { defaultType: "swap" },
-  });
+  const exchange = createTeacherExchange(
+    "binanceFutures",
+    input.credentials,
+    input.executionMode ?? "live",
+  );
   const side = input.positionSide === "long" ? "BUY" : "SELL";
   const positionSide = input.positionSide === "long" ? "LONG" : "SHORT";
   const order = await exchange.createOrder(
@@ -882,22 +879,17 @@ async function createBinanceLiveOrder(input: {
 
 async function closeBinanceLiveOrder(input: {
   credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
   symbol: string;
   amount: number;
   positionSide: "long" | "short";
   orderId: string;
 }): Promise<CloseFill> {
-  const { apiKey, apiSecret } = resolveCredentials(input.credentials, "BINANCE");
-  if (!apiKey || !apiSecret) {
-    throw new Error(
-      "Binance live execution requires teacher credentials or BINANCE_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.binance({
-    apiKey,
-    secret: apiSecret,
-    options: { defaultType: "swap" },
-  });
+  const exchange = createTeacherExchange(
+    "binanceFutures",
+    input.credentials,
+    input.executionMode ?? "live",
+  );
   const side = input.positionSide === "long" ? "SELL" : "BUY";
   const positionSide = input.positionSide === "long" ? "LONG" : "SHORT";
   await exchange.createOrder(
@@ -913,23 +905,18 @@ async function closeBinanceLiveOrder(input: {
 
 // ── teacher account ──
 
-async function fetchBinanceTeacherAccount(
-  credentials: TeacherCredentials | null | undefined,
-): Promise<TeacherAccountSnapshot> {
-  const { apiKey, apiSecret } = resolveCredentials(credentials, "BINANCE");
-  if (!apiKey || !apiSecret) {
-    throw new Error(
-      "Binance teacher account refresh requires teacher credentials or BINANCE_API_* environment variables",
-    );
-  }
-  const exchange = new ccxt.binance({
-    apiKey,
-    secret: apiSecret,
-    options: { defaultType: "swap" },
-  });
-  const [balance, positionsRisk] = await Promise.all([
+async function fetchBinanceTeacherAccount(input: {
+  credentials: TeacherCredentials | null | undefined;
+  executionMode?: ExecutionMode;
+}): Promise<TeacherAccountSnapshot> {
+  const exchange = createTeacherExchange(
+    "binanceFutures",
+    input.credentials,
+    input.executionMode ?? "live",
+  );
+  const [balance, positions] = await Promise.all([
     exchange.fetchBalance(),
-    exchange.fetchPositionsRisk(),
+    exchange.fetchPositions(),
   ]);
   const toNum = (v: unknown) =>
     typeof v === "number" ? v : typeof v === "string" && v ? Number(v) : 0;
@@ -943,7 +930,9 @@ async function fetchBinanceTeacherAccount(
     equity: getUsdt("total") + toNum(balance.info?.totalUnrealizedProfit),
     freeUsdt: toNum(balance.info?.availableBalance ?? getUsdt("free")),
     unrealizedPnl: toNum(balance.info?.totalUnrealizedProfit),
-    teacherPositions: [],
+    teacherPositions: mapCcxtPositionsToSnapshots(
+      positions as unknown as Array<Record<string, unknown>>,
+    ),
   };
 }
 

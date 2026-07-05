@@ -94,7 +94,7 @@ export function AddTeacherForm(props: { onSubmitted?: () => void }) {
       />
       <div className="flex justify-end md:col-span-3">
         <Button type="submit" disabled={pending}>
-          {pending ? t("form.addTeacherSubmitting") : t("form.addTeacher")}
+          {pending ? t("form.addAccountSubmitting") : t("form.addAccount")}
         </Button>
       </div>
     </form>
