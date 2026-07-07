@@ -14,6 +14,7 @@ import {
   normalizeSwapSymbol,
 } from "#/lib/trading/adapters/shared-utils";
 import { BACKTEST_WINDOW_30D_MS, resolveBacktestWindowCutoff } from "#/lib/trading/backtest-window";
+import { paginateDelay } from "#/lib/trading/crawl-rate-limit";
 import { createTeacherExchange } from "#/lib/trading/exchange-client";
 import type { TraderPlatformModel } from "#/lib/trading/trader-data-model";
 import type { TraderProfileInference } from "#/lib/trading/trader-profile-inference";
@@ -416,6 +417,8 @@ async function fetchBinancePositionHistory(
       ) {
         break;
       }
+
+      await paginateDelay();
     } catch {
       break;
     }

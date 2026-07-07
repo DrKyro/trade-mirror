@@ -3,6 +3,7 @@ import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 
 import { db } from "#/lib/db";
 import { discoverRankCache } from "#/lib/db/schema/trading.schema";
+import { DISCOVER_RANK_REQUEST_DELAY_MS, sleep } from "#/lib/trading/crawl-rate-limit";
 import {
   runDiscoverDeepCrawler,
   type DiscoverDeepCrawlResult,
@@ -116,6 +117,8 @@ export async function runDiscoverCrawler(): Promise<DiscoverCrawlerResult> {
           const message = error instanceof Error ? error.message : "unknown crawl error";
           errors.push({ platform, dimension, timeRange, message });
         }
+
+        await sleep(DISCOVER_RANK_REQUEST_DELAY_MS);
       }
 
       platformTraderCount += platformMap.size;

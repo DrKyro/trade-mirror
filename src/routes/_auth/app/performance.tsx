@@ -1,11 +1,29 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { z } from "zod";
 
+import {
+  BacktestBarChart,
+  BacktestLineChart,
+  downsampleChartPoints,
+} from "#/components/trading/backtest-charts";
 import { TradingPageShell } from "#/components/trading/page-shell";
 import { PerformancePortfolioSummary } from "#/components/trading/performance-portfolio-summary";
+import { PerformanceRelationshipRanking } from "#/components/trading/performance-relationship-ranking";
 import { Button } from "#/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { useI18n } from "#/lib/i18n";
+import {
+  buildPortfolioEquityCurve,
+  buildPortfolioRelationshipRanks,
+  type RelationshipRankSort,
+  durationDistributionToChartPoints,
+  hourDistributionToChartPoints,
+  toCumulativeProfitChartPoints,
+  toCumulativeReturnChartPoints,
+  toPerTradeProfitChartPoints,
+  weekdayDistributionToChartPoints,
+} from "#/lib/trading/performance-analytics";
 import { buildPortfolioSummary } from "#/lib/trading/performance-summary";
 import { accountsQueryOptions, allTradersQueryOptions } from "#/lib/trading/queries";
 import {
@@ -20,11 +38,14 @@ import {
   type HistoryBucket,
   reconstructClosedTrades,
   type ReconstructedTrade,
+  type StrategyPerformancePoint,
+  type StrategyTradeSummary,
 } from "#/lib/trading/strategy-analytics";
 import type { TeacherPositionHistoryEntry, TeacherRecord, TraderRecord } from "#/lib/trading/types";
 
 const performanceSearchSchema = z.object({
   copy: z.string().optional(),
+  tab: z.enum(["mine", "reference", "trades", "config"]).optional().catch("mine"),
 });
 
 export const Route = createFileRoute("/_auth/app/performance")({
@@ -42,9 +63,12 @@ export const Route = createFileRoute("/_auth/app/performance")({
 
 type StrategyBoardRecord = {
   key: string;
-  teacherName: string;
-  teacherPlatform: TeacherRecord["platform"];
+  accountId: string;
+  traderId: string;
+  accountName: string;
+  accountPlatform: TeacherRecord["platform"];
   traderName: string;
+  traderPlatform: TraderRecord["platform"];
   strategyName: string;
   followStatus: string;
   traceOrderMode: string;
@@ -65,12 +89,38 @@ type StrategyBoardRecord = {
 function PerformancePage() {
   const { accounts, traders } = Route.useLoaderData();
   const search = Route.useSearch();
+  const navigate = Route.useNavigate();
   const { t } = useI18n();
   const text = useStrategyBoardText();
+  const detailTab = search.tab ?? "mine";
   const [selectedKey, setSelectedKey] = useState<string | null>(search.copy ?? null);
   const [bucket, setBucket] = useState<HistoryBucket>("30d");
+  const [rankSort, setRankSort] = useState<RelationshipRankSort>("pnl");
+
+  const selectRelationship = (key: string) => {
+    setSelectedKey(key);
+    void navigate({
+      search: (current) => ({ ...current, copy: key, tab: current.tab ?? "mine" }),
+      replace: true,
+    });
+  };
+
+  const setDetailTab = (tab: "mine" | "reference" | "trades" | "config") => {
+    void navigate({
+      search: (current) => ({ ...current, tab }),
+      replace: true,
+    });
+  };
 
   const portfolioSummary = useMemo(() => buildPortfolioSummary(accounts), [accounts]);
+  const portfolioEquityCurve = useMemo(
+    () => buildPortfolioEquityCurve(accounts, bucket),
+    [accounts, bucket],
+  );
+  const relationshipRanks = useMemo(
+    () => buildPortfolioRelationshipRanks(accounts, traders, bucket),
+    [accounts, bucket, traders],
+  );
   const records = useMemo(() => buildStrategyBoardRecords(accounts, traders), [accounts, traders]);
 
   const selectedRecord = useMemo(() => {
@@ -93,48 +143,76 @@ function PerformancePage() {
     return filterEntriesByBucket(selectedRecord.recentEntries, bucket);
   }, [bucket, selectedRecord]);
 
-  const closedTrades = useMemo(() => {
+  const referenceClosedTrades = useMemo(() => {
     if (!selectedRecord) {
       return [];
     }
+    return buildReconstructedTradesFromTraderHistory(
+      filterTraderHistoryByBucket(selectedRecord.traderHistoryPositions, bucket),
+    );
+  }, [bucket, selectedRecord]);
 
-    if (selectedRecord.analyticsSource === "trader-history") {
-      return buildReconstructedTradesFromTraderHistory(
-        filterTraderHistoryByBucket(selectedRecord.traderHistoryPositions, bucket),
-      );
+  const mineClosedTrades = useMemo(() => {
+    if (!selectedRecord || selectedRecord.analyticsSource === "trader-history") {
+      return [];
     }
-
     return reconstructClosedTrades(filteredEntries);
-  }, [bucket, filteredEntries, selectedRecord]);
+  }, [filteredEntries, selectedRecord]);
 
-  const performance = useMemo(
-    () =>
-      buildStrategyPerformanceSeries(
-        closedTrades,
-        selectedRecord
-          ? selectedRecord.traceOrderMode === "fixed"
-            ? selectedRecord.fixedFunds || selectedRecord.funds || 1
-            : selectedRecord.funds || 1
-          : 1,
-      ),
-    [closedTrades, selectedRecord],
+  const baseAmount = selectedRecord
+    ? selectedRecord.traceOrderMode === "fixed"
+      ? selectedRecord.fixedFunds || selectedRecord.funds || 1
+      : selectedRecord.funds || 1
+    : 1;
+
+  const minePerformance = useMemo(
+    () => buildStrategyPerformanceSeries(mineClosedTrades, baseAmount),
+    [baseAmount, mineClosedTrades],
   );
 
-  const summary = useMemo(() => buildStrategyTradeSummary(closedTrades), [closedTrades]);
-
-  const openHourDistribution = useMemo(
-    () => buildOpenHourDistribution(closedTrades),
-    [closedTrades],
+  const referencePerformance = useMemo(
+    () => buildStrategyPerformanceSeries(referenceClosedTrades, baseAmount),
+    [baseAmount, referenceClosedTrades],
   );
 
-  const openWeekdayDistribution = useMemo(
-    () => buildOpenWeekdayDistribution(closedTrades),
-    [closedTrades],
+  const mineSummary = useMemo(
+    () => buildStrategyTradeSummary(mineClosedTrades),
+    [mineClosedTrades],
   );
 
-  const durationDistribution = useMemo(
-    () => buildHoldingDurationDistribution(closedTrades),
-    [closedTrades],
+  const referenceSummary = useMemo(
+    () => buildStrategyTradeSummary(referenceClosedTrades),
+    [referenceClosedTrades],
+  );
+
+  const mineOpenHourDistribution = useMemo(
+    () => buildOpenHourDistribution(mineClosedTrades),
+    [mineClosedTrades],
+  );
+
+  const referenceOpenHourDistribution = useMemo(
+    () => buildOpenHourDistribution(referenceClosedTrades),
+    [referenceClosedTrades],
+  );
+
+  const mineOpenWeekdayDistribution = useMemo(
+    () => buildOpenWeekdayDistribution(mineClosedTrades),
+    [mineClosedTrades],
+  );
+
+  const referenceOpenWeekdayDistribution = useMemo(
+    () => buildOpenWeekdayDistribution(referenceClosedTrades),
+    [referenceClosedTrades],
+  );
+
+  const mineDurationDistribution = useMemo(
+    () => buildHoldingDurationDistribution(mineClosedTrades),
+    [mineClosedTrades],
+  );
+
+  const referenceDurationDistribution = useMemo(
+    () => buildHoldingDurationDistribution(referenceClosedTrades),
+    [referenceClosedTrades],
   );
 
   return (
@@ -142,7 +220,20 @@ function PerformancePage() {
       title={t("performance.pageTitle")}
       description={t("performance.pageDescription")}
     >
-      <PerformancePortfolioSummary summary={portfolioSummary} />
+      <PerformancePortfolioSummary
+        summary={portfolioSummary}
+        equityCurve={portfolioEquityCurve}
+        bucket={bucket}
+        onBucketChange={setBucket}
+      />
+
+      <PerformanceRelationshipRanking
+        ranks={relationshipRanks}
+        sortBy={rankSort}
+        onSortChange={setRankSort}
+        selectedKey={selectedRecord?.key ?? selectedKey}
+        onSelect={selectRelationship}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[340px_1fr]">
         <section className="rounded-2xl border bg-card p-4 shadow-sm">
@@ -168,17 +259,17 @@ function PerformancePage() {
                         ? "border-primary bg-primary/5 shadow-sm"
                         : "border-border bg-background hover:border-primary/40 hover:bg-muted/30"
                     }`}
-                    onClick={() => setSelectedKey(record.key)}
+                    onClick={() => selectRelationship(record.key)}
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="font-medium">{record.strategyName}</div>
-                      <Badge>{record.teacherPlatform}</Badge>
+                      <Badge>{record.accountPlatform}</Badge>
                       <Badge tone={record.followStatus === "following" ? "success" : "muted"}>
                         {formatFollowStatus(record.followStatus, text)}
                       </Badge>
                     </div>
                     <div className="mt-2 text-sm text-muted-foreground">
-                      {record.teacherName} {"->"} {record.traderName}
+                      {record.accountName} → {record.traderName}
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
                       <div>{text.openRelationsLabel(record.openRelationsCount)}</div>
@@ -203,7 +294,7 @@ function PerformancePage() {
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-3">
                       <h2 className="text-2xl font-semibold">{selectedRecord.strategyName}</h2>
-                      <Badge>{selectedRecord.teacherPlatform}</Badge>
+                      <Badge>{selectedRecord.accountPlatform}</Badge>
                       <Badge
                         tone={selectedRecord.followStatus === "following" ? "success" : "muted"}
                       >
@@ -211,8 +302,8 @@ function PerformancePage() {
                       </Badge>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      {text.teacherFollowsTrader(
-                        selectedRecord.teacherName,
+                      {text.copyRelationship(
+                        selectedRecord.accountName,
                         selectedRecord.traderName,
                         formatTraceOrderMode(selectedRecord.traceOrderMode, text),
                       )}
@@ -220,6 +311,33 @@ function PerformancePage() {
                     <p className="text-sm text-muted-foreground">{text.boardDescription}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      render={
+                        <Link
+                          to="/app/accounts/$accountId"
+                          params={{ accountId: selectedRecord.accountId }}
+                          search={{ tab: "follow" }}
+                        />
+                      }
+                      nativeButton={false}
+                    >
+                      {t("performance.editCopy")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      render={
+                        <Link
+                          to="/app/traders/$traderId"
+                          params={{ traderId: selectedRecord.traderId }}
+                        />
+                      }
+                      nativeButton={false}
+                    >
+                      {t("performance.viewTrader")}
+                    </Button>
                     {(["7d", "30d", "all"] as const).map((item) => (
                       <Button
                         key={item}
@@ -233,205 +351,141 @@ function PerformancePage() {
                   </div>
                 </div>
 
-                <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <Metric label={text.closedTrades} value={String(summary.closedTrades)} />
-                  <Metric label={text.winRate} value={`${(summary.winRate * 100).toFixed(2)}%`} />
-                  <Metric label={text.realizedProfit} value={summary.realizedProfit.toFixed(2)} />
-                  <Metric
-                    label={text.profitRate}
-                    value={`${(summary.profitRate * 100).toFixed(2)}%`}
-                  />
-                  <Metric
-                    label={text.averageTradeProfit}
-                    value={summary.averageTradeProfit.toFixed(2)}
-                  />
-                  <Metric label={text.profitFactor} value={summary.profitFactorLabel} />
-                  <Metric label={text.maxDrawdown} value={summary.maxDrawdown.toFixed(2)} />
-                  <Metric label={text.averageDuration} value={summary.averageDurationLabel} />
-                  <Metric
-                    label={text.analyticsSource}
-                    value={
-                      selectedRecord.analyticsSource === "trader-history"
-                        ? text.traderHistory
-                        : text.teacherHistory
-                    }
-                  />
-                </div>
-              </div>
+                <Tabs
+                  value={detailTab}
+                  onValueChange={(value) => setDetailTab(value as typeof detailTab)}
+                >
+                  <TabsList className="mt-6 flex h-auto w-full flex-wrap justify-start gap-1">
+                    <TabsTrigger value="mine">{t("performance.tab.mine")}</TabsTrigger>
+                    <TabsTrigger value="reference">{t("performance.tab.reference")}</TabsTrigger>
+                    <TabsTrigger value="trades">{t("performance.tab.trades")}</TabsTrigger>
+                    <TabsTrigger value="config">{t("performance.tab.config")}</TabsTrigger>
+                  </TabsList>
 
-              <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.cumulativeRealizedProfit}</h3>
-                  <div className="mt-4">
-                    <LineChartPanel
-                      points={performance.map((point) => ({
-                        value: point.cumulativeProfit,
-                        label: point.label,
-                      }))}
-                      colorClassName="text-emerald-500"
-                      emptyMessage={text.noClosedFillsForRange}
-                    />
-                  </div>
-                </div>
+                  <TabsContent value="mine" className="mt-6 space-y-6">
+                    {mineClosedTrades.length === 0 ? (
+                      <EmptyState message={text.noMineAnalytics} />
+                    ) : (
+                      <AnalyticsPanels
+                        text={text}
+                        selectedRecord={selectedRecord}
+                        trades={mineClosedTrades}
+                        summary={mineSummary}
+                        performance={minePerformance}
+                        openHourDistribution={mineOpenHourDistribution}
+                        openWeekdayDistribution={mineOpenWeekdayDistribution}
+                        durationDistribution={mineDurationDistribution}
+                        analyticsSourceLabel={text.copyHistory}
+                      />
+                    )}
+                  </TabsContent>
 
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.profitVsDrawdown}</h3>
-                  <div className="mt-4 grid gap-4">
-                    <StatRow
-                      label={text.largestGain}
-                      value={summary.largestGain.toFixed(2)}
-                      positive={summary.largestGain >= 0}
-                    />
-                    <StatRow
-                      label={text.largestLoss}
-                      value={summary.largestLoss.toFixed(2)}
-                      positive={summary.largestLoss >= 0}
-                    />
-                    <StatRow
-                      label={text.grossProfit}
-                      value={summary.grossProfit.toFixed(2)}
-                      positive
-                    />
-                    <StatRow
-                      label={text.grossLoss}
-                      value={summary.grossLoss.toFixed(2)}
-                      positive={false}
-                    />
-                    <StatRow
-                      label={text.openUnrealized}
-                      value={selectedRecord.unrealizedProfitSum.toFixed(2)}
-                      positive={selectedRecord.unrealizedProfitSum >= 0}
-                    />
-                    <StatRow
-                      label={text.configuredStopLoss}
-                      value={selectedRecord.stopLossUsdt.toFixed(2)}
-                      positive={false}
-                    />
-                  </div>
-                </div>
-              </div>
+                  <TabsContent value="reference" className="mt-6 space-y-6">
+                    <div className="flex flex-col gap-3 rounded-2xl border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm text-muted-foreground">{text.referenceHint}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        render={
+                          <Link
+                            to="/app/backtest/$platform/$traderId"
+                            params={{
+                              platform: selectedRecord.traderPlatform,
+                              traderId: selectedRecord.traderId,
+                            }}
+                          />
+                        }
+                        nativeButton={false}
+                      >
+                        {t("performance.openBacktest")}
+                      </Button>
+                    </div>
+                    {referenceClosedTrades.length === 0 ? (
+                      <EmptyState message={text.noReferenceAnalytics} />
+                    ) : (
+                      <AnalyticsPanels
+                        text={text}
+                        selectedRecord={selectedRecord}
+                        trades={referenceClosedTrades}
+                        summary={referenceSummary}
+                        performance={referencePerformance}
+                        openHourDistribution={referenceOpenHourDistribution}
+                        openWeekdayDistribution={referenceOpenWeekdayDistribution}
+                        durationDistribution={referenceDurationDistribution}
+                        analyticsSourceLabel={text.traderHistory}
+                        showCopyMetrics={false}
+                      />
+                    )}
+                  </TabsContent>
 
-              <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.cumulativeProfitRate}</h3>
-                  <div className="mt-4">
-                    <LineChartPanel
-                      points={performance.map((point) => ({
-                        value: point.cumulativeProfitRate,
-                        label: point.label,
-                      }))}
-                      colorClassName="text-sky-500"
-                      asPercent
-                      emptyMessage={text.profitRateEmpty}
-                    />
-                  </div>
-                </div>
+                  <TabsContent value="trades" className="mt-6 space-y-6">
+                    <div className="rounded-2xl border bg-card p-6 shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <h3 className="text-sm font-semibold">{text.closedTradeDetails}</h3>
+                        <div className="text-xs text-muted-foreground">
+                          {text.closedTradeSummary(mineClosedTrades.length, bucket)}
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <ClosedTradeTable trades={mineClosedTrades} />
+                      </div>
+                    </div>
 
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.perTradeRealizedProfit}</h3>
-                  <div className="mt-4">
-                    <BarChartPanel
-                      points={performance.map((point) => ({
-                        value: point.tradeProfit,
-                        label: point.label,
-                      }))}
-                      emptyMessage={text.noPerTradeResults}
-                    />
-                  </div>
-                </div>
-              </div>
+                    <div className="rounded-2xl border bg-card p-6 shadow-sm">
+                      <div className="flex items-center justify-between gap-4">
+                        <h3 className="text-sm font-semibold">{text.copyHistory}</h3>
+                        <div className="text-xs text-muted-foreground">
+                          {text.runtimeEntrySummary(filteredEntries.length)}
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <StrategyOrderHistoryTable entries={filteredEntries} />
+                      </div>
+                    </div>
+                  </TabsContent>
 
-              <div className="grid gap-6 xl:grid-cols-[1fr_1fr_1fr]">
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.openHourDistribution}</h3>
-                  <div className="mt-4">
-                    <BarChartPanel
-                      points={openHourDistribution}
-                      emptyMessage={text.openHourDistributionEmpty}
-                    />
-                  </div>
-                </div>
+                  <TabsContent value="config" className="mt-6 space-y-6">
+                    <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+                      <div className="rounded-2xl border bg-card p-6 shadow-sm">
+                        <h3 className="text-sm font-semibold">{text.strategyConfiguration}</h3>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <Metric label={text.funds} value={selectedRecord.funds.toFixed(2)} />
+                          <Metric
+                            label={text.fixedFunds}
+                            value={selectedRecord.fixedFunds.toFixed(2)}
+                          />
+                          <Metric
+                            label={text.traceRatio}
+                            value={selectedRecord.tracePerRatio.toFixed(3)}
+                          />
+                          <Metric
+                            label={text.stopLossRate}
+                            value={`${(selectedRecord.stopLossPositionValueRate * 100).toFixed(2)}%`}
+                          />
+                          <Metric
+                            label={text.openRelations}
+                            value={String(selectedRecord.openRelationsCount)}
+                          />
+                          <Metric
+                            label={text.liveTraderPositions}
+                            value={String(selectedRecord.traderPositions.length)}
+                          />
+                          <Metric
+                            label={text.traderHistoryRows}
+                            value={String(selectedRecord.traderHistoryPositions.length)}
+                          />
+                        </div>
+                      </div>
 
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.openWeekdayDistribution}</h3>
-                  <div className="mt-4">
-                    <BarChartPanel
-                      points={openWeekdayDistribution}
-                      emptyMessage={text.openWeekdayDistributionEmpty}
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.holdingDuration}</h3>
-                  <div className="mt-4">
-                    <BarChartPanel
-                      points={durationDistribution}
-                      emptyMessage={text.holdingDurationEmpty}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.strategyConfiguration}</h3>
-                  <div className="mt-4 grid gap-3 md:grid-cols-2">
-                    <Metric label={text.funds} value={selectedRecord.funds.toFixed(2)} />
-                    <Metric label={text.fixedFunds} value={selectedRecord.fixedFunds.toFixed(2)} />
-                    <Metric
-                      label={text.traceRatio}
-                      value={selectedRecord.tracePerRatio.toFixed(3)}
-                    />
-                    <Metric
-                      label={text.stopLossRate}
-                      value={`${(selectedRecord.stopLossPositionValueRate * 100).toFixed(2)}%`}
-                    />
-                    <Metric
-                      label={text.openRelations}
-                      value={String(selectedRecord.openRelationsCount)}
-                    />
-                    <Metric
-                      label={text.liveTraderPositions}
-                      value={String(selectedRecord.traderPositions.length)}
-                    />
-                    <Metric
-                      label={text.traderHistoryRows}
-                      value={String(selectedRecord.traderHistoryPositions.length)}
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                  <h3 className="text-sm font-semibold">{text.liveTraderPositions}</h3>
-                  <div className="mt-4">
-                    <TraderPositionsTable positions={selectedRecord.traderPositions} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold">{text.closedTradeDetails}</h3>
-                  <div className="text-xs text-muted-foreground">
-                    {text.closedTradeSummary(closedTrades.length, bucket)}
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <ClosedTradeTable trades={closedTrades} />
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-card p-6 shadow-sm">
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="text-sm font-semibold">{text.runtimeTeacherHistory}</h3>
-                  <div className="text-xs text-muted-foreground">
-                    {text.runtimeEntrySummary(filteredEntries.length)}
-                  </div>
-                </div>
-                <div className="mt-4">
-                  <StrategyOrderHistoryTable entries={filteredEntries} />
-                </div>
+                      <div className="rounded-2xl border bg-card p-6 shadow-sm">
+                        <h3 className="text-sm font-semibold">{text.liveTraderPositions}</h3>
+                        <div className="mt-4">
+                          <TraderPositionsTable positions={selectedRecord.traderPositions} />
+                        </div>
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
               </div>
             </>
           ) : (
@@ -464,9 +518,12 @@ function buildStrategyBoardRecords(
 
       return {
         key: `${account.id}:${setting.id}`,
-        teacherName: account.name,
-        teacherPlatform: account.platform,
+        accountId: account.id,
+        traderId: setting.id,
+        accountName: account.name,
+        accountPlatform: account.platform,
         traderName: trader?.name ?? setting.name,
+        traderPlatform: trader?.platform ?? account.platform,
         strategyName: trader?.strategyName ?? setting.name,
         followStatus: setting.followStatus,
         traceOrderMode: setting.traceOrderMode,
@@ -503,85 +560,181 @@ function filterTraderHistoryByBucket(
   });
 }
 
-function LineChartPanel(props: {
-  points: Array<{ value: number; label: string }>;
-  colorClassName: string;
-  emptyMessage: string;
-  asPercent?: boolean;
+function AnalyticsPanels(props: {
+  text: ReturnType<typeof useStrategyBoardText>;
+  selectedRecord: StrategyBoardRecord;
+  trades: ReconstructedTrade[];
+  summary: StrategyTradeSummary;
+  performance: StrategyPerformancePoint[];
+  openHourDistribution: Array<{ value: number; label: string }>;
+  openWeekdayDistribution: Array<{ value: number; label: string }>;
+  durationDistribution: Array<{ value: number; label: string }>;
+  analyticsSourceLabel: string;
+  showCopyMetrics?: boolean;
 }) {
-  const text = useStrategyBoardText();
-  const path = buildLineChartPoints(props.points.map((point) => point.value));
+  const { t } = useI18n();
+  const showCopyMetrics = props.showCopyMetrics ?? true;
+  const formatUsd = (value: number) => `${value.toFixed(2)} U`;
+  const formatCount = (value: number) => String(Math.round(value));
+  const formatHours = (value: number) => `${value.toFixed(1)}h`;
 
-  if (props.points.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
-        {props.emptyMessage}
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-2xl border bg-background p-4">
-      <div className="h-56 w-full">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
-          <polyline
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            points={path}
-            className={props.colorClassName}
-          />
-        </svg>
-      </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{props.points[0]?.label ?? text.na}</span>
-        <span>{formatMetricValue(props.points.at(-1)?.value ?? 0, props.asPercent)}</span>
-      </div>
-    </div>
+  const cumulativeProfitPoints = toCumulativeProfitChartPoints(props.performance, props.trades);
+  const cumulativeReturnPoints = toCumulativeReturnChartPoints(props.performance, props.trades);
+  const perTradeProfitPoints = downsampleChartPoints(
+    toPerTradeProfitChartPoints(props.performance, props.trades),
+    72,
   );
-}
-
-function BarChartPanel(props: {
-  points: Array<{ value: number; label: string }>;
-  emptyMessage: string;
-}) {
-  const text = useStrategyBoardText();
-
-  if (props.points.length === 0) {
-    return (
-      <div className="flex h-56 items-center justify-center rounded-2xl border bg-muted/20 text-sm text-muted-foreground">
-        {props.emptyMessage}
-      </div>
-    );
-  }
-
-  const values = props.points.map((point) => point.value);
-  const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 1);
 
   return (
-    <div className="rounded-2xl border bg-background p-4">
-      <div className="flex h-56 items-end gap-2 overflow-hidden">
-        {props.points.map((point, index) => {
-          const height = Math.max((Math.abs(point.value) / maxAbs) * 100, 4);
-          return (
-            <div
-              key={`${point.label}-${index}`}
-              className="flex min-w-0 flex-1 flex-col justify-end gap-2"
-            >
-              <div
-                className={`rounded-t-md ${point.value >= 0 ? "bg-emerald-500" : "bg-rose-500"}`}
-                style={{ height: `${height}%` }}
-                title={`${point.label}: ${point.value.toFixed(2)}`}
-              />
-            </div>
-          );
-        })}
+    <>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Metric label={props.text.closedTrades} value={String(props.summary.closedTrades)} />
+        <Metric label={props.text.winRate} value={`${(props.summary.winRate * 100).toFixed(2)}%`} />
+        <Metric label={props.text.realizedProfit} value={props.summary.realizedProfit.toFixed(2)} />
+        <Metric
+          label={props.text.profitRate}
+          value={`${(props.summary.profitRate * 100).toFixed(2)}%`}
+        />
+        <Metric
+          label={props.text.averageTradeProfit}
+          value={props.summary.averageTradeProfit.toFixed(2)}
+        />
+        <Metric label={props.text.profitFactor} value={props.summary.profitFactorLabel} />
+        <Metric label={props.text.maxDrawdown} value={props.summary.maxDrawdown.toFixed(2)} />
+        <Metric label={props.text.averageDuration} value={props.summary.averageDurationLabel} />
+        <Metric label={props.text.analyticsSource} value={props.analyticsSourceLabel} />
       </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-        <span>{props.points[0]?.label ?? text.na}</span>
-        <span>{props.points.at(-1)?.label ?? text.na}</span>
+
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.cumulativeRealizedProfit}</h3>
+          <div className="mt-4">
+            <BacktestLineChart
+              points={cumulativeProfitPoints}
+              color="hsl(142 71% 45%)"
+              emptyMessage={props.text.noClosedFillsForRange}
+              valueFormatter={formatUsd}
+              valueLabel={t("performance.chart.cumulativeProfit")}
+              hoverLabelMode="trade"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.profitVsDrawdown}</h3>
+          <div className="mt-4 grid gap-4">
+            <StatRow
+              label={props.text.largestGain}
+              value={props.summary.largestGain.toFixed(2)}
+              positive={props.summary.largestGain >= 0}
+            />
+            <StatRow
+              label={props.text.largestLoss}
+              value={props.summary.largestLoss.toFixed(2)}
+              positive={props.summary.largestLoss >= 0}
+            />
+            <StatRow
+              label={props.text.grossProfit}
+              value={props.summary.grossProfit.toFixed(2)}
+              positive
+            />
+            <StatRow
+              label={props.text.grossLoss}
+              value={props.summary.grossLoss.toFixed(2)}
+              positive={false}
+            />
+            {showCopyMetrics ? (
+              <>
+                <StatRow
+                  label={props.text.openUnrealized}
+                  value={props.selectedRecord.unrealizedProfitSum.toFixed(2)}
+                  positive={props.selectedRecord.unrealizedProfitSum >= 0}
+                />
+                <StatRow
+                  label={props.text.configuredStopLoss}
+                  value={props.selectedRecord.stopLossUsdt.toFixed(2)}
+                  positive={false}
+                />
+              </>
+            ) : null}
+          </div>
+        </div>
       </div>
-    </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.cumulativeProfitRate}</h3>
+          <div className="mt-4">
+            <BacktestLineChart
+              points={cumulativeReturnPoints}
+              color="hsl(199 89% 48%)"
+              emptyMessage={props.text.profitRateEmpty}
+              valueLabel={t("performance.chart.cumulativeReturn")}
+              asPercent
+              hoverLabelMode="trade"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.perTradeRealizedProfit}</h3>
+          <div className="mt-4">
+            <BacktestBarChart
+              points={perTradeProfitPoints}
+              emptyMessage={props.text.noPerTradeResults}
+              valueFormatter={formatUsd}
+              valueLabel={t("performance.chart.perTradeProfit")}
+              hoverLabelMode="trade"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1fr_1fr_1fr]">
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.openHourDistribution}</h3>
+          <div className="mt-4">
+            <BacktestBarChart
+              points={hourDistributionToChartPoints(props.openHourDistribution)}
+              emptyMessage={props.text.openHourDistributionEmpty}
+              valueFormatter={formatCount}
+              valueLabel={t("performance.chart.openCount")}
+              domainMode="positive"
+              heightClassName="h-48"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.openWeekdayDistribution}</h3>
+          <div className="mt-4">
+            <BacktestBarChart
+              points={weekdayDistributionToChartPoints(props.openWeekdayDistribution)}
+              emptyMessage={props.text.openWeekdayDistributionEmpty}
+              valueFormatter={formatCount}
+              valueLabel={t("performance.chart.openCount")}
+              domainMode="positive"
+              heightClassName="h-48"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border bg-card p-6 shadow-sm">
+          <h3 className="text-sm font-semibold">{props.text.holdingDuration}</h3>
+          <div className="mt-4">
+            <BacktestBarChart
+              points={durationDistributionToChartPoints(props.durationDistribution, props.trades)}
+              emptyMessage={props.text.holdingDurationEmpty}
+              valueFormatter={formatHours}
+              valueLabel={t("performance.chart.holdingHours")}
+              domainMode="positive"
+              heightClassName="h-48"
+              hoverLabelMode="trade"
+            />
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -813,28 +966,6 @@ function StatRow(props: { label: string; value: string; positive: boolean }) {
   );
 }
 
-function buildLineChartPoints(values: number[]) {
-  if (values.length === 0) {
-    return "";
-  }
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
-
-  return values
-    .map((value, index) => {
-      const x = values.length === 1 ? 50 : (index / (values.length - 1)) * 100;
-      const y = 100 - ((value - min) / range) * 100;
-      return `${x},${y}`;
-    })
-    .join(" ");
-}
-
-function formatMetricValue(value: number, asPercent = false) {
-  return asPercent ? `${(value * 100).toFixed(2)}%` : value.toFixed(2);
-}
-
 function useStrategyBoardText() {
   const { locale } = useI18n();
   const isZh = locale === "zh-CN";
@@ -842,23 +973,32 @@ function useStrategyBoardText() {
   return {
     strategySelector: isZh ? "跟单组合" : "Follow pairs",
     strategySelectorDescription: isZh
-      ? "这里列出已经接入跟单执行链路的老师账户与交易员组合。"
-      : "Teacher-trader pairs currently configured for follow execution.",
+      ? "这里列出已配置跟单关系的交易账户与带单员组合。"
+      : "Trading account and lead trader pairs configured for copy execution.",
     openRelationsLabel: (count: number) =>
       isZh ? `开仓关系：${count}` : `Open relations: ${count}`,
     trackedFillsLabel: (count: number) => (isZh ? `跟踪成交：${count}` : `Tracked fills: ${count}`),
     unrealizedLabel: (value: string) => (isZh ? `未实现：${value}` : `Unrealized: ${value}`),
     realizedLabel: (value: string) => (isZh ? `已实现：${value}` : `Realized: ${value}`),
     noStrategyRecords: isZh
-      ? "暂时还没有跟单分析记录。请至少先配置一条老师账户与交易员的跟单关系。"
-      : "No follow analytics records yet. Configure at least one teacher-trader follow relationship first.",
-    teacherFollowsTrader: (teacher: string, trader: string, mode: string) =>
+      ? "暂时还没有跟单分析记录。请至少先配置一条交易账户与带单员的跟单关系。"
+      : "No copy analytics records yet. Configure at least one account-to-lead-trader copy relationship first.",
+    copyRelationship: (account: string, trader: string, mode: string) =>
       isZh
-        ? `交易员 ${teacher} 跟随交易员 ${trader} · 模式 ${mode}`
-        : `Trader ${teacher} follows trader ${trader} · mode ${mode}`,
+        ? `${account} 跟单 ${trader} · 模式 ${mode}`
+        : `${account} copies ${trader} · mode ${mode}`,
+    referenceHint: isZh
+      ? "带单员参考基于带单员公开历史持仓重建，用于对比你的实际跟单表现。"
+      : "Lead trader reference is rebuilt from public history positions for comparison with your copy results.",
+    noMineAnalytics: isZh
+      ? "所选时间范围内还没有跟单成交记录。切换到「交易明细」查看运行时历史，或等待跟单执行产生数据。"
+      : "No copy fills in the selected range yet. Check Trades for runtime history, or wait for copy execution data.",
+    noReferenceAnalytics: isZh
+      ? "该带单员暂无可用历史持仓，无法生成参考分析。"
+      : "No lead trader history is available to build reference analytics.",
     boardDescription: isZh
-      ? "这个内部分析页会优先使用持久化的交易员历史；如果没有历史数据，则回退到运行时跟单历史，用来展示这条跟单关系的实际表现。"
-      : "This internal analytics page prefers persisted trader history and falls back to runtime follow history to show the actual performance of each follow relationship.",
+      ? "「我的表现」基于你的跟单成交；「带单员参考」基于带单员公开历史，便于对比复盘。"
+      : "My performance uses your copy fills; Lead trader reference uses public history for side-by-side review.",
     closedTrades: isZh ? "已平仓交易" : "Closed trades",
     winRate: isZh ? "胜率" : "Win rate",
     realizedProfit: isZh ? "已实现收益" : "Realized profit",
@@ -868,8 +1008,8 @@ function useStrategyBoardText() {
     maxDrawdown: isZh ? "最大回撤" : "Max drawdown",
     averageDuration: isZh ? "平均持仓时长" : "Avg duration",
     analyticsSource: isZh ? "分析来源" : "Analytics source",
-    traderHistory: isZh ? "交易员历史" : "trader history",
-    teacherHistory: isZh ? "交易员历史" : "trader history",
+    traderHistory: isZh ? "带单员历史" : "Lead trader history",
+    copyHistory: isZh ? "跟单执行历史" : "Copy execution history",
     cumulativeRealizedProfit: isZh ? "累计已实现收益" : "Cumulative realized profit",
     noClosedFillsForRange: isZh
       ? "这个时间范围内还没有已平仓策略成交记录。"
@@ -907,21 +1047,21 @@ function useStrategyBoardText() {
     traceRatio: isZh ? "跟单比例" : "Trace ratio",
     stopLossRate: isZh ? "止损比例" : "Stop loss rate",
     openRelations: isZh ? "开仓关系数" : "Open relations",
-    liveTraderPositions: isZh ? "交易员实时持仓" : "Live trader positions",
-    traderHistoryRows: isZh ? "交易员历史条数" : "Trader history rows",
+    liveTraderPositions: isZh ? "带单员实时持仓" : "Live lead trader positions",
+    traderHistoryRows: isZh ? "带单员历史条数" : "Lead trader history rows",
     closedTradeDetails: isZh ? "已平仓交易明细" : "Closed trade details",
     closedTradeSummary: (count: number, bucket: HistoryBucket) =>
       isZh ? `${bucket} 内重建出 ${count} 笔交易` : `${count} reconstructed trade(s) in ${bucket}`,
-    runtimeTeacherHistory: isZh ? "运行时交易员历史" : "Runtime trader history",
+    runtimeTeacherHistory: isZh ? "跟单执行历史" : "Copy execution history",
     runtimeEntrySummary: (count: number) =>
       isZh ? `${count} 条运行时记录` : `${count} runtime entr${count === 1 ? "y" : "ies"}`,
     waitingForStrategyData: isZh
-      ? "跟单分析正在等待数据。先添加交易员并绑定老师账户后，这个页面就会有内容。"
-      : "Follow analytics is waiting for data. Add traders and bind a teacher account to populate this page.",
+      ? "跟单表现正在等待数据。先添加带单员并配置交易账户跟单关系后，这个页面就会有内容。"
+      : "Copy performance is waiting for data. Add lead traders and configure account copy relationships to populate this page.",
     na: isZh ? "暂无" : "n/a",
     noLiveTraderPositions: isZh
-      ? "这个跟单组合当前没有交易员实时持仓。"
-      : "No live trader positions are currently open for this follow pair.",
+      ? "这个跟单组合当前没有带单员实时持仓。"
+      : "No live lead trader positions are currently open for this copy pair.",
     symbol: isZh ? "交易对" : "Symbol",
     side: isZh ? "方向" : "Side",
     entry: isZh ? "开仓价" : "Entry",

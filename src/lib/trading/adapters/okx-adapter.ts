@@ -18,6 +18,7 @@ import {
   BACKTEST_WINDOW_90D_MS,
   resolveBacktestWindowCutoff,
 } from "#/lib/trading/backtest-window";
+import { paginateDelay } from "#/lib/trading/crawl-rate-limit";
 import { createTeacherExchange } from "#/lib/trading/exchange-client";
 import type { TraderPlatformModel } from "#/lib/trading/trader-data-model";
 import type { TraderProfileInference } from "#/lib/trading/trader-profile-inference";
@@ -477,6 +478,8 @@ async function fetchOkxPositionHistory(
 
     after = page[page.length - 1]?.id ?? null;
     if (!after) break;
+
+    await paginateDelay();
   }
 
   return history;
@@ -754,6 +757,10 @@ async function fetchOkxRankList(query: TraderRankQuery): Promise<TraderRankResul
         seen.add(entry.uniqueName);
         allEntries.push(entry);
       }
+    }
+
+    if (allEntries.length < targetCount && ranks.length > 0) {
+      await paginateDelay();
     }
   }
 

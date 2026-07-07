@@ -12,6 +12,8 @@ export function discoverDeepQueryKey(platform: TraderPlatform, traderId: string)
   return ["discover", "deep", platform, traderId] as const;
 }
 
+const DISABLED_DEEP_QUERY_KEY = ["discover", "deep", "disabled"] as const;
+
 export function useDiscoverDeepAnalysis(
   platform: TraderPlatform | undefined,
   traderId: string | undefined,
@@ -19,15 +21,27 @@ export function useDiscoverDeepAnalysis(
 ) {
   const queryClient = useQueryClient();
   const refreshAttemptedRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  const active = enabled && platform !== undefined && traderId !== undefined && traderId.length > 0;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      refreshAttemptedRef.current = false;
+    };
+  }, []);
 
   const query = useQuery({
-    queryKey: discoverDeepQueryKey(platform ?? "okx", traderId ?? ""),
+    queryKey: active ? discoverDeepQueryKey(platform, traderId) : DISABLED_DEEP_QUERY_KEY,
     queryFn: ({ signal }) =>
       $fetchTraderDeepAnalysis({
         signal,
         data: { platform: platform!, traderId: traderId!, window: "all" },
       }),
-    enabled: enabled && platform !== undefined && traderId !== undefined && traderId.length > 0,
+    enabled: active,
+    staleTime: 60_000,
   });
 
   const refreshMutation = useMutation({
@@ -36,7 +50,7 @@ export function useDiscoverDeepAnalysis(
         data: { platform: platform!, traderId: traderId! },
       }),
     onSuccess: (result) => {
-      if (!platform || !traderId) return;
+      if (!mountedRef.current || !platform || !traderId) return;
       const next: TraderDeepAnalysisResponse = {
         status: "ready",
         analysis: result.analysis,
@@ -45,15 +59,14 @@ export function useDiscoverDeepAnalysis(
       queryClient.setQueryData(discoverDeepQueryKey(platform, traderId), next);
     },
     onError: () => {
-      refreshAttemptedRef.current = false;
+      if (mountedRef.current) {
+        refreshAttemptedRef.current = false;
+      }
     },
   });
 
   useEffect(() => {
-    if (!enabled) {
-      refreshAttemptedRef.current = false;
-      return;
-    }
+    if (!active) return;
 
     if (query.data?.status === "ready") {
       refreshAttemptedRef.current = false;
@@ -66,9 +79,13 @@ export function useDiscoverDeepAnalysis(
       !refreshMutation.isPending
     ) {
       refreshAttemptedRef.current = true;
-      void refreshMutation.mutateAsync().catch(() => undefined);
+      void refreshMutation.mutateAsync().catch(() => {
+        if (mountedRef.current) {
+          refreshAttemptedRef.current = false;
+        }
+      });
     }
-  }, [enabled, query.data?.status, refreshMutation.isPending, refreshMutation.mutateAsync]);
+  }, [active, query.data?.status, refreshMutation.isPending]);
 
   const isRefreshing =
     refreshMutation.isPending || (query.data?.status === "pending" && refreshAttemptedRef.current);

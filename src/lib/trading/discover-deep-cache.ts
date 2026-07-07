@@ -8,6 +8,14 @@ import {
   userDiscoverFavorite,
 } from "#/lib/db/schema/trading.schema";
 import {
+  DISCOVER_DEEP_CRAWL_CONCURRENCY,
+  DISCOVER_DEEP_CRAWL_MAX_RETRIES,
+  DISCOVER_DEEP_REFRESH_COOLDOWN_MS,
+  DISCOVER_DEEP_REQUEST_DELAY_MS,
+  retryWithBackoff,
+  sleep,
+} from "#/lib/trading/crawl-rate-limit";
+import {
   DISCOVER_DEEP_WARMUP_PER_PLATFORM,
   DISCOVER_DEEP_WARMUP_TIME_RANGE,
 } from "#/lib/trading/discover-rank-config";
@@ -16,7 +24,7 @@ import { fetchTraderDeepAnalysis } from "#/lib/trading/trader-rank-adapters.serv
 import type { TraderDeepAnalysis } from "#/lib/trading/trader-rank-types";
 import type { TraderPlatform } from "#/lib/trading/types";
 
-export const DISCOVER_DEEP_CRAWL_CONCURRENCY = 4;
+export { DISCOVER_DEEP_CRAWL_CONCURRENCY } from "#/lib/trading/crawl-rate-limit";
 
 export type DeepCrawlTarget = {
   platform: TraderPlatform;
@@ -107,11 +115,26 @@ export async function listDeepCrawlTargets(): Promise<DeepCrawlTarget[]> {
 export async function refreshTraderDeepCache(
   platform: TraderPlatform,
   traderId: string,
+  options?: { force?: boolean },
 ): Promise<TraderDeepCacheRecord> {
+  const cached = await queryTraderDeepCache(platform, traderId);
+  if (
+    !options?.force &&
+    cached &&
+    Date.now() - cached.crawledAt < DISCOVER_DEEP_REFRESH_COOLDOWN_MS
+  ) {
+    return cached;
+  }
+
   const crawledAt = Date.now();
-  const analysis = await fetchTraderDeepAnalysis(platform, traderId, {
-    historyWindow: "all",
-  });
+  const analysis = await retryWithBackoff(
+    `deep:${platform}:${traderId}`,
+    () =>
+      fetchTraderDeepAnalysis(platform, traderId, {
+        historyWindow: "all",
+      }),
+    { maxRetries: DISCOVER_DEEP_CRAWL_MAX_RETRIES },
+  );
   await upsertTraderDeepCache(analysis, crawledAt);
   return { analysis, crawledAt };
 }
@@ -158,6 +181,7 @@ async function mapWithConcurrency<T>(
   items: T[],
   concurrency: number,
   worker: (item: T) => Promise<void>,
+  delayMs = 0,
 ) {
   if (items.length === 0) return;
 
@@ -167,6 +191,9 @@ async function mapWithConcurrency<T>(
       const current = queue.shift();
       if (!current) break;
       await worker(current);
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
     }
   });
 
@@ -178,21 +205,31 @@ export async function runDiscoverDeepCrawler(): Promise<DiscoverDeepCrawlResult>
   const targets = await listDeepCrawlTargets();
   const errors: DiscoverDeepCrawlResult["errors"] = [];
 
-  await mapWithConcurrency(targets, DISCOVER_DEEP_CRAWL_CONCURRENCY, async (target) => {
-    try {
-      const analysis = await fetchTraderDeepAnalysis(target.platform, target.traderId, {
-        historyWindow: "all",
-      });
-      await upsertTraderDeepCache(analysis, crawledAt);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown deep crawl error";
-      errors.push({
-        platform: target.platform,
-        traderId: target.traderId,
-        message,
-      });
-    }
-  });
+  await mapWithConcurrency(
+    targets,
+    DISCOVER_DEEP_CRAWL_CONCURRENCY,
+    async (target) => {
+      try {
+        const analysis = await retryWithBackoff(
+          `deep-crawl:${target.platform}:${target.traderId}`,
+          () =>
+            fetchTraderDeepAnalysis(target.platform, target.traderId, {
+              historyWindow: "all",
+            }),
+          { maxRetries: DISCOVER_DEEP_CRAWL_MAX_RETRIES },
+        );
+        await upsertTraderDeepCache(analysis, crawledAt);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "unknown deep crawl error";
+        errors.push({
+          platform: target.platform,
+          traderId: target.traderId,
+          message,
+        });
+      }
+    },
+    DISCOVER_DEEP_REQUEST_DELAY_MS,
+  );
 
   return {
     attempted: targets.length,

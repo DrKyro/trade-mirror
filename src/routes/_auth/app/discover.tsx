@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { DiscoverFavoriteButton } from "#/components/trading/discover-favorite-button";
+import { DiscoverTrackButton } from "#/components/trading/discover-track-button";
 import { TradingPageShell } from "#/components/trading/page-shell";
 import { useDiscoverDeepAnalysis } from "#/components/trading/use-discover-deep-analysis";
 import { Badge } from "#/components/ui/badge";
@@ -34,6 +35,8 @@ import {
   isDiscoverLeaderboardSort,
 } from "#/lib/trading/discover-rank-config";
 import { $fetchTraderRankList, $listDiscoverFavorites } from "#/lib/trading/discover-repository";
+import { tradersQueryOptions } from "#/lib/trading/queries";
+import { isTraderTracked } from "#/lib/trading/track-trader-from-discover";
 import { SUPPORTED_RANK_PLATFORMS } from "#/lib/trading/trader-rank-adapters";
 import type {
   DiscoverFavoriteRecord,
@@ -157,6 +160,12 @@ function DiscoverPage() {
     queryKey: ["discover", "favorites"],
     queryFn: ({ signal }) => $listDiscoverFavorites({ signal }),
   });
+
+  const trackedQuery = useQuery(tradersQueryOptions());
+  const trackedIds = useMemo(
+    () => new Set((trackedQuery.data ?? []).map((trader) => trader.id)),
+    [trackedQuery.data],
+  );
 
   const minYieldRatio = parseNumericFilter(minYieldRatioInput);
   const minPnl = parseNumericFilter(minPnlInput);
@@ -373,6 +382,7 @@ function DiscoverPage() {
                       item.platform,
                       item.traderId,
                     )}
+                    tracked={isTraderTracked(trackedIds, item)}
                     onClick={() => setSelectedTrader(item)}
                   />
                 ))}
@@ -381,6 +391,7 @@ function DiscoverPage() {
               <TraderTable
                 items={pagedItems}
                 favorites={favoritesQuery.data ?? []}
+                trackedIds={trackedIds}
                 onRowClick={setSelectedTrader}
               />
             )}
@@ -396,13 +407,16 @@ function DiscoverPage() {
         )}
       </div>
 
-      <DeepAnalysisSheet
-        trader={selectedTrader}
-        favorites={favoritesQuery.data ?? []}
-        timeRange={timeRange}
-        rankCrawledAt={rankQuery.data?.crawledAt ?? null}
-        onClose={() => setSelectedTrader(null)}
-      />
+      {selectedTrader ? (
+        <DeepAnalysisSheet
+          trader={selectedTrader}
+          favorites={favoritesQuery.data ?? []}
+          trackedIds={trackedIds}
+          timeRange={timeRange}
+          rankCrawledAt={rankQuery.data?.crawledAt ?? null}
+          onClose={() => setSelectedTrader(null)}
+        />
+      ) : null}
     </TradingPageShell>
   );
 }
@@ -892,10 +906,12 @@ function Sparkline({
 function TraderCard({
   item,
   favorited,
+  tracked,
   onClick,
 }: {
   item: TraderRankItem;
   favorited: boolean;
+  tracked: boolean;
   onClick: () => void;
 }) {
   const { t } = useI18n();
@@ -955,6 +971,8 @@ function TraderCard({
           <Metric label={t("discover.winRate")} value={formatPercent(item.winRate)} />
         ) : null}
       </div>
+
+      <DiscoverTrackButton item={item} tracked={tracked} className="w-full" />
     </button>
   );
 }
@@ -962,10 +980,12 @@ function TraderCard({
 function TraderTable({
   items,
   favorites,
+  trackedIds,
   onRowClick,
 }: {
   items: TraderRankItem[];
   favorites: DiscoverFavoriteRecord[];
+  trackedIds: Set<string>;
   onRowClick: (item: TraderRankItem) => void;
 }) {
   const { t } = useI18n();
@@ -985,6 +1005,7 @@ function TraderTable({
             <th className="px-3 py-3">{t("discover.maxDrawdown")}</th>
             <th className="px-3 py-3">{t("discover.winRate")}</th>
             <th className="px-3 py-3">{t("discover.instNum")}</th>
+            <th className="px-3 py-3">{t("discover.track")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1063,6 +1084,9 @@ function TraderTable({
                 </span>
               </td>
               <td className="px-3 py-3 text-muted-foreground">{item.instNum ?? "—"}</td>
+              <td className="px-3 py-3">
+                <DiscoverTrackButton item={item} tracked={isTraderTracked(trackedIds, item)} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -1122,129 +1146,133 @@ function Pagination({
 function DeepAnalysisSheet({
   trader,
   favorites,
+  trackedIds,
   timeRange,
   rankCrawledAt,
   onClose,
 }: {
-  trader: TraderRankItem | null;
+  trader: TraderRankItem;
   favorites: DiscoverFavoriteRecord[];
+  trackedIds: Set<string>;
   timeRange: RankTimeRange;
   rankCrawledAt: number | null;
   onClose: () => void;
 }) {
   const { t, locale } = useI18n();
-  const open = trader !== null;
 
   const {
     query: analysisQuery,
     isRefreshing,
     refreshFailed,
-  } = useDiscoverDeepAnalysis(trader?.platform, trader?.traderId, open);
+  } = useDiscoverDeepAnalysis(trader.platform, trader.traderId, true);
 
   const response: TraderDeepAnalysisResponse | null = analysisQuery.data ?? null;
   const data = response?.status === "ready" ? response.analysis : null;
   const dataCachedAt = response?.status === "ready" ? response.crawledAt : null;
 
   return (
-    <Sheet open={open} onOpenChange={(value) => !value && onClose()}>
+    <Sheet open onOpenChange={(value) => !value && onClose()}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-4xl">
-        {trader ? (
-          <>
-            <SheetHeader>
-              <div className="flex items-center gap-3">
-                {trader.avatar ? (
-                  <img
-                    src={trader.avatar}
-                    alt={trader.nickName}
-                    className="size-12 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="flex size-12 items-center justify-center rounded-full bg-muted font-medium">
-                    {trader.nickName.slice(0, 2)}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <SheetTitle className="truncate">{trader.nickName}</SheetTitle>
-                  <SheetDescription>
-                    {platformLabel(trader.platform)} · @{trader.uniqueName}
-                  </SheetDescription>
-                </div>
-                <DiscoverFavoriteButton
-                  trader={{
-                    platform: trader.platform,
-                    traderId: trader.traderId,
-                    uniqueName: trader.uniqueName,
-                    nickName: trader.nickName,
-                    avatar: trader.avatar,
-                    link: trader.link,
-                  }}
-                  favorited={isDiscoverFavorite(favorites, trader.platform, trader.traderId)}
-                  size="sm"
+        <>
+          <SheetHeader>
+            <div className="flex items-center gap-3">
+              {trader.avatar ? (
+                <img
+                  src={trader.avatar}
+                  alt={trader.nickName}
+                  className="size-12 rounded-full object-cover"
                 />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  render={<a href={trader.link} target="_blank" rel="noopener noreferrer" />}
-                  nativeButton={false}
-                >
-                  <ExternalLinkIcon className="size-4" />
-                  <span className="sr-only">{t("discover.viewOnExchange")}</span>
-                </Button>
+              ) : (
+                <div className="flex size-12 items-center justify-center rounded-full bg-muted font-medium">
+                  {trader.nickName.slice(0, 2)}
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="truncate">{trader.nickName}</SheetTitle>
+                <SheetDescription>
+                  {platformLabel(trader.platform)} · @{trader.uniqueName}
+                </SheetDescription>
               </div>
-              {trader.sign ? <p className="text-sm text-muted-foreground">{trader.sign}</p> : null}
-            </SheetHeader>
-
-            <div className="flex flex-col gap-6 px-6 pb-6">
-              <DeepDataScopeNote
-                timeRange={timeRange}
-                rankCrawledAt={rankCrawledAt}
-                deepCachedAt={dataCachedAt}
-                locale={locale}
+              <DiscoverFavoriteButton
+                trader={{
+                  platform: trader.platform,
+                  traderId: trader.traderId,
+                  uniqueName: trader.uniqueName,
+                  nickName: trader.nickName,
+                  avatar: trader.avatar,
+                  link: trader.link,
+                }}
+                favorited={isDiscoverFavorite(favorites, trader.platform, trader.traderId)}
+                size="sm"
               />
-
-              {analysisQuery.isPending || isRefreshing ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2Icon className="size-4 animate-spin" />
-                  {isRefreshing ? t("discover.refreshingDeepData") : t("discover.analyzing")}
-                </div>
-              ) : analysisQuery.isError || refreshFailed ? (
-                <div className="text-destructive">{t("discover.error")}</div>
-              ) : response?.status === "pending" ? (
-                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-                  <p>{t("discover.deepDataPending")}</p>
-                  <p className="mt-2 text-xs">{t("discover.deepDataPendingHint")}</p>
-                </div>
-              ) : data ? (
-                <>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      render={
-                        <Link
-                          to="/app/backtest/$platform/$traderId"
-                          preload={false}
-                          params={{
-                            platform: trader.platform,
-                            traderId: trader.traderId,
-                          }}
-                        />
-                      }
-                      nativeButton={false}
-                    >
-                      {t("discover.backtestButton")}
-                    </Button>
-                  </div>
-
-                  <DeepStats data={data} summary={trader} />
-                  <ExtraStatsSection data={data} />
-                  <YieldCurveSection data={data} />
-                  <PositionsSection data={data} />
-                  <HistorySection data={data} />
-                </>
-              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                render={<a href={trader.link} target="_blank" rel="noopener noreferrer" />}
+                nativeButton={false}
+              >
+                <ExternalLinkIcon className="size-4" />
+                <span className="sr-only">{t("discover.viewOnExchange")}</span>
+              </Button>
             </div>
-          </>
-        ) : null}
+            {trader.sign ? <p className="text-sm text-muted-foreground">{trader.sign}</p> : null}
+          </SheetHeader>
+
+          <div className="flex flex-col gap-6 px-6 pb-6">
+            <DeepDataScopeNote
+              timeRange={timeRange}
+              rankCrawledAt={rankCrawledAt}
+              deepCachedAt={dataCachedAt}
+              locale={locale}
+            />
+
+            {analysisQuery.isPending || isRefreshing ? (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Loader2Icon className="size-4 animate-spin" />
+                {isRefreshing ? t("discover.refreshingDeepData") : t("discover.analyzing")}
+              </div>
+            ) : analysisQuery.isError || refreshFailed ? (
+              <div className="text-destructive">{t("discover.error")}</div>
+            ) : response?.status === "pending" ? (
+              <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                <p>{t("discover.deepDataPending")}</p>
+                <p className="mt-2 text-xs">{t("discover.deepDataPendingHint")}</p>
+              </div>
+            ) : data ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <DiscoverTrackButton
+                    item={trader}
+                    tracked={isTraderTracked(trackedIds, trader)}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    render={
+                      <Link
+                        to="/app/backtest/$platform/$traderId"
+                        preload={false}
+                        params={{
+                          platform: trader.platform,
+                          traderId: trader.traderId,
+                        }}
+                      />
+                    }
+                    nativeButton={false}
+                  >
+                    {t("discover.backtestButton")}
+                  </Button>
+                </div>
+
+                <DeepStats data={data} summary={trader} />
+                <ExtraStatsSection data={data} />
+                <YieldCurveSection data={data} />
+                <PositionsSection data={data} />
+                <HistorySection data={data} />
+              </>
+            ) : null}
+          </div>
+        </>
       </SheetContent>
     </Sheet>
   );
