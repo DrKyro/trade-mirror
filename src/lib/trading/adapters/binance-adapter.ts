@@ -853,27 +853,33 @@ async function createBinanceLiveOrder(input: {
   amount: number;
   positionSide: "long" | "short";
   followOrderId: string;
+  leverage?: number;
+  marginMode?: string | null;
 }): Promise<ExecutionFill> {
+  const { buildBinanceOrderParams, ensureSymbolLeverage, prepareMarketOrderAmount } =
+    await import("#/lib/trading/execution/exchange-order");
   const exchange = createTeacherExchange(
     "binanceFutures",
     input.credentials,
     input.executionMode ?? "live",
   );
-  const side = input.positionSide === "long" ? "BUY" : "SELL";
-  const positionSide = input.positionSide === "long" ? "LONG" : "SHORT";
+  const symbol = normalizeSwapSymbol(input.symbol);
+  await ensureSymbolLeverage(exchange, symbol, input.leverage);
+  const amount = await prepareMarketOrderAmount(exchange, symbol, input.amount);
+  const side = input.positionSide === "long" ? "buy" : "sell";
   const order = await exchange.createOrder(
-    normalizeSwapSymbol(input.symbol),
-    "MARKET",
+    symbol,
+    "market",
     side,
-    input.amount,
+    amount,
     undefined,
-    { positionSide },
+    buildBinanceOrderParams(input.positionSide),
   );
   return {
     orderId: String(order.id),
     followOrderId: input.followOrderId,
     symbol: input.symbol,
-    amount: input.amount,
+    amount,
     positionSide: input.positionSide,
     openAvgPrice: order.average ?? order.price ?? 0,
     openTime: order.timestamp ?? Date.now(),
@@ -887,23 +893,29 @@ async function closeBinanceLiveOrder(input: {
   amount: number;
   positionSide: "long" | "short";
   orderId: string;
+  leverage?: number;
+  marginMode?: string | null;
 }): Promise<CloseFill> {
+  const { buildBinanceOrderParams, ensureSymbolLeverage, prepareMarketOrderAmount } =
+    await import("#/lib/trading/execution/exchange-order");
   const exchange = createTeacherExchange(
     "binanceFutures",
     input.credentials,
     input.executionMode ?? "live",
   );
-  const side = input.positionSide === "long" ? "SELL" : "BUY";
-  const positionSide = input.positionSide === "long" ? "LONG" : "SHORT";
+  const symbol = normalizeSwapSymbol(input.symbol);
+  await ensureSymbolLeverage(exchange, symbol, input.leverage);
+  const amount = await prepareMarketOrderAmount(exchange, symbol, input.amount);
+  const side = input.positionSide === "long" ? "sell" : "buy";
   await exchange.createOrder(
-    normalizeSwapSymbol(input.symbol),
-    "MARKET",
+    symbol,
+    "market",
     side,
-    input.amount,
+    amount,
     undefined,
-    { positionSide },
+    buildBinanceOrderParams(input.positionSide),
   );
-  return { orderId: input.orderId, closedAmount: input.amount, closeTime: Date.now() };
+  return { orderId: input.orderId, closedAmount: amount, closeTime: Date.now() };
 }
 
 // ── teacher account ──

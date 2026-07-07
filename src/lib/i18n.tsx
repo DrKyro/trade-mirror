@@ -305,7 +305,12 @@ const dictionaries: Record<AppLocale, Dictionary> = {
     "accounts.onboarding.title": "快速开始",
     "accounts.onboarding.step1": "1. 绑定交易所 API 创建交易账户",
     "accounts.onboarding.step2": "2. 在「发现」或「跟单配置」添加要带单的交易员",
-    "accounts.onboarding.step3": "3. 选择「交易所模拟」模式，在账户详情配置跟单比例与止损",
+    "accounts.onboarding.step3":
+      "3. 选择「交易所模拟」模式（仅 OKX / Binance），在账户详情绑定同平台带单员",
+    "accounts.dialog.demoPlatformsOnly": "交易所模拟账户目前仅支持 OKX 与 Binance。",
+    "accounts.dialog.probeRequired": "请先通过模拟盘连接测试，再进入下一步。",
+    "accounts.dialog.dryRunNoCredentials": "内部模拟模式无需 API Key，可直接继续。",
+    "accounts.follow.noMatchingTraders": "暂无同平台带单员可绑定",
     "accounts.follow.edit": "编辑配置",
     "accounts.follow.configureInAccount": "配置跟单账户",
     "accounts.follow.editInAccount": "编辑跟单配置",
@@ -848,7 +853,12 @@ const dictionaries: Record<AppLocale, Dictionary> = {
     "accounts.onboarding.step1": "1. Connect an exchange API to create a trading account",
     "accounts.onboarding.step2": "2. Add lead traders from Discover or Follow Config",
     "accounts.onboarding.step3":
-      "3. Use Exchange demo mode and configure copy ratio and stop-loss in account details",
+      "3. Use Exchange demo mode (OKX / Binance only) and bind lead traders on the same platform",
+    "accounts.dialog.demoPlatformsOnly":
+      "Exchange demo accounts currently support OKX and Binance only.",
+    "accounts.dialog.probeRequired": "Pass the demo connection test before continuing.",
+    "accounts.dialog.dryRunNoCredentials": "Internal paper mode does not require API keys.",
+    "accounts.follow.noMatchingTraders": "No lead traders on this platform are available to bind",
     "accounts.follow.edit": "Edit config",
     "accounts.follow.configureInAccount": "Configure copy account",
     "accounts.follow.editInAccount": "Edit copy config",

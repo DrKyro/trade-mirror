@@ -71,6 +71,8 @@ export interface PlatformAdapter {
       amount: number;
       positionSide: "long" | "short";
       followOrderId: string;
+      leverage?: number;
+      marginMode?: string | null;
     },
   ): Promise<ExecutionFill>;
   closeLiveOrder?(
@@ -79,6 +81,8 @@ export interface PlatformAdapter {
       amount: number;
       positionSide: "long" | "short";
       orderId: string;
+      leverage?: number;
+      marginMode?: string | null;
     },
   ): Promise<CloseFill>;
   fetchTeacherAccount?(input: TeacherExchangeContext): Promise<TeacherAccountSnapshot>;

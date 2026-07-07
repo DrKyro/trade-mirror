@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { useI18n } from "#/lib/i18n";
+import { filterTradersForTeacherPlatform } from "#/lib/trading/follow-platform";
 import { $updateTeacherTraceTraders } from "#/lib/trading/repository";
 import type { TeacherRecord, TraceTraderSetting, TraderRecord } from "#/lib/trading/types";
 
@@ -43,8 +45,12 @@ export function AccountFollowSettingsForm(props: {
   });
   const [pending, setPending] = useState(false);
 
-  const availableTraders = props.traders.filter(
-    (trader) => !props.account.traceTraderList.some((item) => item.id === trader.id),
+  const availableTraders = useMemo(
+    () =>
+      filterTradersForTeacherPlatform(props.traders, props.account.platform).filter(
+        (trader) => !props.account.traceTraderList.some((item) => item.id === trader.id),
+      ),
+    [props.account.platform, props.account.traceTraderList, props.traders],
   );
 
   const highlight = Boolean(
@@ -86,6 +92,9 @@ export function AccountFollowSettingsForm(props: {
           });
           setSelectedTraderId(availableTraders.find((item) => item.id !== trader.id)?.id ?? "");
           props.onSubmitted?.();
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          toast.error(detail);
         } finally {
           setPending(false);
         }
@@ -105,7 +114,7 @@ export function AccountFollowSettingsForm(props: {
           >
             <option value="">
               {availableTraders.length === 0
-                ? t("form.allTradersConfigured")
+                ? t("accounts.follow.noMatchingTraders")
                 : t("form.selectTrader")}
             </option>
             {availableTraders.map((trader) => (
@@ -169,6 +178,9 @@ export function TraceTraderEditor(props: {
             },
           });
           props.onSubmitted?.();
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          toast.error(detail);
         } finally {
           setPending(false);
         }

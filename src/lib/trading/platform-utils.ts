@@ -1,3 +1,4 @@
+import { DEMO_TEACHER_PLATFORMS } from "#/lib/trading/follow-platform";
 import type { TraderPlatform } from "#/lib/trading/types";
 
 const LIVE_REFRESH_PLATFORMS: TraderPlatform[] = ["okx", "bitget", "binanceFutures", "bybit"];
@@ -10,6 +11,9 @@ const PLATFORM_LABELS: Record<TraderPlatform, string> = {
 };
 
 export const SUPPORTED_TEACHER_PLATFORMS: TraderPlatform[] = [...LIVE_REFRESH_PLATFORMS];
+
+/** Subset used when binding exchange demo accounts (OKX + Binance only). */
+export const DEMO_ACCOUNT_PLATFORMS: TraderPlatform[] = [...DEMO_TEACHER_PLATFORMS];
 
 export function getPlatformLabel(platform: TraderPlatform) {
   return PLATFORM_LABELS[platform];

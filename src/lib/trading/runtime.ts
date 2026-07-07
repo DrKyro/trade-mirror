@@ -568,6 +568,8 @@ class TradingRuntime {
         if (refreshSchedulerState.running) {
           this.refreshScheduler.setRunning(false);
           this.refreshScheduler.setLoop(null);
+        }
+        if (!refreshSchedulerState.lastStartedAt || refreshSchedulerState.running) {
           await this.startRefreshScheduler();
         }
 
@@ -1218,6 +1220,17 @@ class TradingRuntime {
     settings?: TeacherSettings;
   }) {
     await this.ensureBooted();
+    if (input.executionMode === "demo") {
+      const { DEMO_TEACHER_PLATFORMS } = await import("#/lib/trading/follow-platform");
+      if (!DEMO_TEACHER_PLATFORMS.includes(input.platform)) {
+        throw new Error(
+          `Exchange demo accounts are limited to ${DEMO_TEACHER_PLATFORMS.join(" and ")}.`,
+        );
+      }
+      if (!input.credentials?.apiKey || !input.credentials.apiSecret) {
+        throw new Error("Exchange demo accounts require API credentials.");
+      }
+    }
     const initialBalance =
       (input.executionMode ?? "dry-run") === "dry-run" ? DEFAULT_DRY_RUN_TEACHER_BALANCE : 0;
 
@@ -1405,8 +1418,12 @@ class TradingRuntime {
       return null;
     }
 
-    teacherRecord.traceTraderList = traceTraderList.map((setting) => ({ ...setting }));
     const traders = await listTraders();
+    const { assertTraceTradersMatchTeacherPlatform } =
+      await import("#/lib/trading/follow-platform");
+    assertTraceTradersMatchTeacherPlatform(teacherRecord, traceTraderList, traders);
+
+    teacherRecord.traceTraderList = traceTraderList.map((setting) => ({ ...setting }));
     updateTeacherMarksFromTraders(teacherRecord, traders);
     await updateTeacherRecord(teacherId, teacherRecord);
     await this.pushEvent({
@@ -1432,8 +1449,12 @@ class TradingRuntime {
       return null;
     }
 
-    teacherRecord.traceTraderList = traceTraderList.map((setting) => ({ ...setting }));
     const traders = await listTraders();
+    const { assertTraceTradersMatchTeacherPlatform } =
+      await import("#/lib/trading/follow-platform");
+    assertTraceTradersMatchTeacherPlatform(teacherRecord, traceTraderList, traders);
+
+    teacherRecord.traceTraderList = traceTraderList.map((setting) => ({ ...setting }));
     updateTeacherMarksFromTraders(teacherRecord, traders);
     await updateTeacherRecord(teacherId, teacherRecord, userId);
     await this.pushEvent({

@@ -2,6 +2,7 @@ import "@tanstack/react-start/server-only";
 import "#/lib/trading/adapters/index";
 import { getAdapter } from "#/lib/trading/adapters/registry";
 import { isExchangeBackedMode } from "#/lib/trading/execution-mode";
+import { DEMO_TEACHER_PLATFORMS } from "#/lib/trading/follow-platform";
 import type {
   CloseFill,
   ExecutionFill,
@@ -10,7 +11,6 @@ import type {
   FollowOrderRelation,
   PositionChange,
   TeacherRecord,
-  TraderRecord,
 } from "#/lib/trading/types";
 
 function now() {
@@ -43,6 +43,17 @@ function getPlatformClass(platform: TeacherRecord["platform"]) {
   return platform === "binanceFutures" ? "amountClass" : "orderClass";
 }
 
+function getExchangeOrderMeta(change: PositionChange) {
+  return {
+    leverage: change.leverage,
+    marginMode: change.marginMode,
+  };
+}
+
+function supportsExchangePartialClose(platform: TeacherRecord["platform"]) {
+  return DEMO_TEACHER_PLATFORMS.includes(platform);
+}
+
 function createDryRunFill(
   request: ExecutionRequest,
   platformClass: ExecutionServiceResult["platformClass"],
@@ -62,11 +73,7 @@ function createDryRunFill(
       openAvgPrice: request.change.entryPrice,
       openTime: now(),
     },
-    notes: [
-      isExchangeBackedMode(request.teacher.executionMode)
-        ? `${request.teacher.executionMode} create execution adapter placeholder used; no exchange order was sent`
-        : "dry-run create execution generated",
-    ],
+    notes: ["dry-run create execution generated"],
   } satisfies ExecutionServiceResult;
 }
 
@@ -80,6 +87,32 @@ async function createLiveOrder(request: ExecutionRequest, amount: number) {
     amount,
     positionSide: request.change.positionSide,
     followOrderId: request.change.id,
+    ...getExchangeOrderMeta(request.change),
+  });
+}
+
+async function closeLiveOrderForRelation(
+  request: ExecutionRequest,
+  relation: FollowOrderRelation,
+  amount: number,
+) {
+  const adapter = getAdapter(request.teacher.platform);
+  if (!adapter.closeLiveOrder) {
+    return {
+      orderId: relation.orderId,
+      closedAmount: amount,
+      closeTime: Date.now(),
+    } satisfies CloseFill;
+  }
+
+  return adapter.closeLiveOrder({
+    credentials: request.teacher.credentials,
+    executionMode: request.teacher.executionMode,
+    orderId: relation.orderId,
+    symbol: relation.symbol,
+    amount,
+    positionSide: relation.positionSide,
+    ...getExchangeOrderMeta(request.change),
   });
 }
 
@@ -96,45 +129,16 @@ async function closeLiveOrders(
         relation.positionSide === request.change.positionSide,
     );
 
-    const adapter = getAdapter(request.teacher.platform);
     return Promise.all(
       matching.map((relation) =>
-        adapter.closeLiveOrder!({
-          credentials: request.teacher.credentials,
-          executionMode: request.teacher.executionMode,
-          orderId: relation.orderId,
-          symbol: relation.symbol,
-          amount: Math.min(relation.amount, tracedAmount),
-          positionSide: relation.positionSide,
-        }),
+        closeLiveOrderForRelation(request, relation, Math.min(relation.amount, tracedAmount)),
       ),
     );
   }
 
   const matching = getOrderClassMatches(request);
-  const adapter = getAdapter(request.teacher.platform);
-  if (!adapter.closeLiveOrder) {
-    return matching.map(
-      (relation) =>
-        ({
-          orderId: relation.orderId,
-          closedAmount: relation.amount,
-          closeTime: Date.now(),
-        }) satisfies CloseFill,
-    );
-  }
-
   return Promise.all(
-    matching.map((relation) =>
-      adapter.closeLiveOrder!({
-        credentials: request.teacher.credentials,
-        executionMode: request.teacher.executionMode,
-        orderId: relation.orderId,
-        symbol: relation.symbol,
-        amount: relation.amount,
-        positionSide: relation.positionSide,
-      }),
-    ),
+    matching.map((relation) => closeLiveOrderForRelation(request, relation, relation.amount)),
   );
 }
 
@@ -154,20 +158,21 @@ function closePartialForOrderClass(
     remaining = Number(Math.max(remaining - closedAmount, 0).toFixed(6));
   }
 
-  const notes = [
-    isExchangeBackedMode(mode)
-      ? `${mode} execution for partial order-class close is not wired yet; fill shape is reserved`
-      : "dry-run partial order-class close generated",
-  ];
+  const notes = ["dry-run partial order-class close generated"];
   if (remaining > 0) notes.push(`partial close left ${remaining} amount unmatched`);
 
-  return { mode, platformClass: "orderClass", closeFills, notes } satisfies ExecutionServiceResult;
+  return {
+    mode,
+    platformClass: "orderClass" as const,
+    closeFills,
+    notes,
+  } satisfies ExecutionServiceResult;
 }
 
 async function closeLiveOrdersForAmountDecrease(
   request: ExecutionRequest,
   platformClass: "orderClass" | "amountClass",
-) {
+): Promise<{ closeFills: CloseFill[]; notes: string[] }> {
   if (platformClass === "amountClass" && request.teacher.platform === "binanceFutures") {
     const matching = request.existingRelations.filter(
       (relation) =>
@@ -177,30 +182,46 @@ async function closeLiveOrdersForAmountDecrease(
     );
     let remaining = deriveTracedAmount(request);
     const closeFills: CloseFill[] = [];
-    const adapter = getAdapter(request.teacher.platform);
 
     for (const relation of matching) {
       if (!(remaining > 0)) break;
       const closedAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
       if (!(closedAmount > 0)) continue;
-      const fill = await adapter.closeLiveOrder!({
-        credentials: request.teacher.credentials,
-        executionMode: request.teacher.executionMode,
-        orderId: relation.orderId,
-        symbol: relation.symbol,
-        amount: closedAmount,
-        positionSide: relation.positionSide,
-      });
+      const fill = await closeLiveOrderForRelation(request, relation, closedAmount);
       closeFills.push(fill);
       remaining = Number(Math.max(remaining - closedAmount, 0).toFixed(6));
     }
 
     const notes: string[] = [];
     if (remaining > 0) notes.push(`partial close left ${remaining} amount unmatched`);
-    return { mode: "live" as const, platformClass, closeFills, notes };
+    return { closeFills, notes };
   }
 
-  return closePartialForOrderClass(request, "live");
+  if (
+    platformClass === "orderClass" &&
+    request.teacher.platform === "okx" &&
+    supportsExchangePartialClose(request.teacher.platform)
+  ) {
+    const matching = getOrderClassMatches(request);
+    let remaining = deriveTracedAmount(request);
+    const closeFills: CloseFill[] = [];
+
+    for (const relation of matching) {
+      if (!(remaining > 0)) break;
+      const closedAmount = Number(Math.min(relation.amount, remaining).toFixed(6));
+      if (!(closedAmount > 0)) continue;
+      const fill = await closeLiveOrderForRelation(request, relation, closedAmount);
+      closeFills.push(fill);
+      remaining = Number(Math.max(remaining - closedAmount, 0).toFixed(6));
+    }
+
+    const notes: string[] = [];
+    if (remaining > 0) notes.push(`partial close left ${remaining} amount unmatched`);
+    return { closeFills, notes };
+  }
+
+  const fallback = closePartialForOrderClass(request, request.teacher.executionMode ?? "dry-run");
+  return { closeFills: fallback.closeFills ?? [], notes: fallback.notes ?? [] };
 }
 
 export async function executePositionChange(
@@ -209,7 +230,7 @@ export async function executePositionChange(
   const platformClass = getPlatformClass(request.teacher.platform);
   const mode = request.teacher.executionMode ?? "dry-run";
   const adapter = getAdapter(request.teacher.platform);
-  const supportsLive = Boolean(adapter.createLiveOrder);
+  const supportsLive = typeof adapter.createLiveOrder === "function";
 
   if (request.change.added || isAmountIncrease(request.change)) {
     if (isExchangeBackedMode(mode) && supportsLive) {
@@ -222,14 +243,19 @@ export async function executePositionChange(
         };
       }
       const fill = await createLiveOrder(request, tracedAmount);
-      if (fill) {
+      if (!fill) {
         return {
           mode,
           platformClass,
-          createdFill: fill,
-          notes: [`${request.teacher.platform} ${mode} create order executed`],
+          notes: [`${request.teacher.platform} ${mode} create order returned no fill`],
         };
       }
+      return {
+        mode,
+        platformClass,
+        createdFill: fill,
+        notes: [`${request.teacher.platform} ${mode} create order executed`],
+      };
     }
     return createDryRunFill(request, platformClass);
   }
@@ -238,7 +264,7 @@ export async function executePositionChange(
     if (isExchangeBackedMode(mode) && supportsLive) {
       const closeResult = isAmountDecrease(request.change)
         ? await closeLiveOrdersForAmountDecrease(request, platformClass)
-        : { closeFills: await closeLiveOrders(request, platformClass), notes: [] };
+        : { closeFills: await closeLiveOrders(request, platformClass), notes: [] as string[] };
       return {
         mode,
         platformClass,

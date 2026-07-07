@@ -1037,19 +1037,28 @@ async function createOkxLiveOrder(input: {
   amount: number;
   positionSide: "long" | "short";
   followOrderId: string;
+  leverage?: number;
+  marginMode?: string | null;
 }): Promise<ExecutionFill> {
+  const { buildOkxOrderParams, ensureSymbolLeverage, prepareMarketOrderAmount } =
+    await import("#/lib/trading/execution/exchange-order");
   const exchange = createTeacherExchange("okx", input.credentials, input.executionMode ?? "live");
+  const symbol = normalizeSwapSymbol(input.symbol);
+  await ensureSymbolLeverage(exchange, symbol, input.leverage);
+  const amount = await prepareMarketOrderAmount(exchange, symbol, input.amount);
   const side = input.positionSide === "long" ? "buy" : "sell";
   const order = await exchange.createMarketOrder(
-    normalizeSwapSymbol(input.symbol),
+    symbol,
     side,
-    input.amount,
+    amount,
+    undefined,
+    buildOkxOrderParams(input.positionSide, input.marginMode),
   );
   return {
     orderId: String(order.id),
     followOrderId: input.followOrderId,
     symbol: input.symbol,
-    amount: input.amount,
+    amount,
     positionSide: input.positionSide,
     openAvgPrice: order.average ?? order.price ?? 0,
     openTime: order.timestamp ?? Date.now(),
@@ -1063,11 +1072,24 @@ async function closeOkxLiveOrder(input: {
   amount: number;
   positionSide: "long" | "short";
   orderId: string;
+  leverage?: number;
+  marginMode?: string | null;
 }): Promise<CloseFill> {
+  const { buildOkxOrderParams, ensureSymbolLeverage, prepareMarketOrderAmount } =
+    await import("#/lib/trading/execution/exchange-order");
   const exchange = createTeacherExchange("okx", input.credentials, input.executionMode ?? "live");
+  const symbol = normalizeSwapSymbol(input.symbol);
+  await ensureSymbolLeverage(exchange, symbol, input.leverage);
+  const amount = await prepareMarketOrderAmount(exchange, symbol, input.amount);
   const side = input.positionSide === "long" ? "sell" : "buy";
-  await exchange.createMarketOrder(normalizeSwapSymbol(input.symbol), side, input.amount);
-  return { orderId: input.orderId, closedAmount: input.amount, closeTime: Date.now() };
+  await exchange.createMarketOrder(
+    symbol,
+    side,
+    amount,
+    undefined,
+    buildOkxOrderParams(input.positionSide, input.marginMode),
+  );
+  return { orderId: input.orderId, closedAmount: amount, closeTime: Date.now() };
 }
 
 // ── teacher account ──

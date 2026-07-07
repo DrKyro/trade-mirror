@@ -404,13 +404,20 @@ export async function applyPositionChangeToTeacher(
       traceSetting.stopLossUsdt = round(strategyRiskUsdt, 4);
     }
 
-    const execution = await executeTeacherChange({
-      teacher,
-      trader,
-      change,
-      traceSetting,
-      existingRelations: teacher.followRelations,
-    });
+    let execution: Awaited<ReturnType<typeof executeTeacherChange>> = null;
+    try {
+      execution = await executeTeacherChange({
+        teacher,
+        trader,
+        change,
+        traceSetting,
+        existingRelations: teacher.followRelations,
+      });
+    } catch (error) {
+      const ps = error instanceof Error ? error.message : String(error);
+      recordRiskRejection(teacher, trader, change, `交易所下单失败: ${ps}`);
+      return;
+    }
 
     const fill = execution?.createdFill ?? null;
     if (!fill || !(fill.amount > 0)) {
@@ -481,13 +488,32 @@ export async function applyPositionChangeToTeacher(
   }
 
   if (change.removed || isAmountDecrease(change)) {
-    const execution = await executeTeacherChange({
-      teacher,
-      trader,
-      change,
-      traceSetting,
-      existingRelations: teacher.followRelations,
-    });
+    let execution: Awaited<ReturnType<typeof executeTeacherChange>> = null;
+    try {
+      execution = await executeTeacherChange({
+        teacher,
+        trader,
+        change,
+        traceSetting,
+        existingRelations: teacher.followRelations,
+      });
+    } catch (error) {
+      const ps = error instanceof Error ? error.message : String(error);
+      appendTeacherPositionHistory(teacher, {
+        t: Date.now(),
+        orderId: null,
+        symbol: change.symbol,
+        side: change.positionSide,
+        amount: getRequestedChangeAmount(change),
+        price: round(change.markPrice ?? change.entryPrice, 6),
+        profit: 0,
+        traderId: trader.id,
+        action: 0,
+        success: 0,
+        ps: `交易所平仓失败: ${ps}`,
+      });
+      return;
+    }
 
     const closeFills = execution?.closeFills ?? [];
     if (closeFills.length === 0) {
